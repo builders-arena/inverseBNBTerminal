@@ -1,0 +1,179 @@
+/* =====================================================================
+   PAPER TERMINAL — design tokens + components
+   Extracted from a warm "paper ledger" trading UI. Drop into any site.
+   Font: Inter (https://fonts.google.com/specimen/Inter)
+   ===================================================================== */
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap");
+
+:root {
+  /* ---- Surfaces (warm parchment, 4 tiers) ---- */
+  --page:        #EDE5D0;  /* app background + gutters between tiles   */
+  --panel:       #F4ECD8;  /* cards / tiles                           */
+  --raised:      #FAF6ED;  /* popovers, menus                          */
+  --field:       #FBF8F1;  /* inputs, secondary buttons                */
+  --sunken:      #E8DEC8;  /* wells, disabled zones, chart shading     */
+  --border:      #D4CBBA;  /* hairlines                                */
+  --border-soft: rgba(212,203,186,.7);
+  --border-faint:rgba(212,203,186,.4);
+
+  /* ---- Ink (warm near-black, never pure #000) ---- */
+  --ink:        #2A2520;   /* primary text, values                     */
+  --ink-2:      #4F473D;   /* secondary values                         */
+  --ink-3:      #5D5449;   /* button text on light                     */
+  --label:      #756C61;   /* row labels                               */
+  --muted:      #7A7060;   /* nav, table headers, captions             */
+  --ghost:      rgba(42,37,32,.28); /* ambient/watermark text          */
+  --on-ink:     #F7F2E8;   /* text on dark/green fills                 */
+
+  /* ---- Semantic ---- */
+  --pos:        #2D5F3A;   /* forest green — primary action, gains     */
+  --pos-bright: #337746;   /* live indicators, positive text           */
+  --neg:        #8B2020;   /* oxblood — losses, danger                 */
+  --warm:       #7A6235;   /* brass accent                             */
+  --signal:     #D9620A;   /* chart line / highlight orange            */
+  --rust:       #A55230;   /* secondary series                         */
+  --tint-pos:   rgba(45,95,58,.12);
+  --tint-neg:   rgba(139,32,32,.12);
+  --tint-ink:   rgba(42,37,32,.12);
+
+  /* ---- Type ---- */
+  --font: Inter, system-ui, -apple-system, sans-serif;
+  --fs-micro: 9px;    /* badges                    */
+  --fs-xs:   10px;    /* table headers, axis ticks */
+  --fs-sm:   10.5px;  /* table cells               */
+  --fs-label:11px;    /* card titles, buttons      */
+  --fs-base: 12px;    /* nav, values               */
+  --fs-md:   13px;    /* body, inputs              */
+  --fs-hero: 30px;    /* headline numbers          */
+
+  /* ---- Shape & space ---- */
+  --gap:      3px;    /* THE signature: hairline gutters between tiles */
+  --r-tile:   8px;
+  --r-ctl:    4px;
+  --r-seg:    5px;
+  --pad-tile: 12px 14px;
+  --h-ctl:    38px;
+  --h-header: 44px;
+
+  /* ---- Depth (almost none — flat paper) ---- */
+  --shadow-1: 0 1px 3px rgba(42,37,32,.06);
+  --glow-pos: 0 0 6px 1px rgba(51,119,70,.4);
+  --glow-neg: 0 0 6px 1px rgba(180,30,30,.45);
+
+  /* ---- Motion (fast, no bounce) ---- */
+  --t-fast: 120ms;
+  --t-med:  150ms;
+  --ease:   ease;
+}
+
+/* ---------------- Base ---------------- */
+*,*::before,*::after { box-sizing: border-box; }
+html,body { margin:0; background:var(--page); color:var(--ink);
+  font: 400 var(--fs-md)/1.4 var(--font);
+  -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; }
+.num, td, .value, .hero-num { font-variant-numeric: tabular-nums; }
+a { color: inherit; text-decoration: none; }
+::selection { background: var(--tint-pos); }
+
+/* ---------------- Header ---------------- */
+.header { height:var(--h-header); display:flex; align-items:center; gap:24px;
+  padding:0 16px; background:var(--page); border-bottom:1px solid var(--border);
+  position:sticky; top:0; z-index:10; }
+.wordmark { font-size:18px; font-weight:500; letter-spacing:-.02em; color:var(--ink); }
+.wordmark::after { content:"_"; color:var(--neg); animation: blink 1.1s steps(1) infinite; }
+@keyframes blink { 50% { opacity:0; } }
+
+.nav { display:flex; gap:0; }
+.nav a, .topbtn { font-size:var(--fs-base); font-weight:600; color:var(--muted);
+  padding:2px 12px 4px; border-bottom:2px solid transparent; background:none; border-top:0;border-left:0;border-right:0;
+  cursor:pointer; transition: color var(--t-fast), border-color var(--t-fast), background var(--t-fast); }
+.nav a:hover, .topbtn:hover { color:var(--ink); }
+.nav a.on { color:var(--ink); border-bottom-color:var(--ink); }
+
+/* ---------------- Ambient ticker strip ---------------- */
+.ticker { overflow:hidden; white-space:nowrap; padding:8px 0; border-bottom:1px solid var(--border-faint); }
+.ticker__track { display:inline-flex; gap:48px; animation: marquee 40s linear infinite; }
+.ticker span { font-size:var(--fs-label); font-weight:700; letter-spacing:.18em;
+  text-transform:uppercase; color:var(--ghost); }
+@keyframes marquee { to { transform: translateX(-50%); } }
+
+/* ---------------- Tile mosaic layout ---------------- */
+.mosaic { display:grid; gap:var(--gap); padding:var(--gap); background:var(--page); }
+.tile { background:var(--panel); border-radius:var(--r-tile); padding:var(--pad-tile);
+  display:flex; flex-direction:column; gap:10px; min-width:0; }
+.tile-title { margin:0; font-size:var(--fs-label); line-height:1.3; font-weight:700;
+  letter-spacing:.06em; text-transform:uppercase; color:var(--ink); }
+.tile-head { display:flex; align-items:center; gap:10px; }
+.tile-sub { font-size:var(--fs-xs); color:var(--muted); }
+.hero-num { font-size:var(--fs-hero); line-height:1; font-weight:600; letter-spacing:-.02em; }
+
+/* key/value rows */
+.kv { display:flex; justify-content:space-between; align-items:baseline; padding:3px 0; }
+.kv dt { font-size:var(--fs-label); font-weight:500; color:var(--label); }
+.kv dd { margin:0; font-size:var(--fs-base); font-weight:500; color:var(--ink-2); font-variant-numeric:tabular-nums; }
+
+/* ---------------- Controls ---------------- */
+.btn { height:var(--h-ctl); padding:0 12px; border-radius:var(--r-ctl); border:1px solid transparent;
+  font: 700 var(--fs-label)/1 var(--font); letter-spacing:.06em; text-transform:uppercase;
+  cursor:pointer; transition: background var(--t-fast), color var(--t-fast), border-color var(--t-fast), transform var(--t-med); }
+.btn:active { transform: translateY(1px); }
+.btn-primary { background:var(--pos); color:var(--on-ink); }
+.btn-primary:hover { background:#26512F; }
+.btn-primary:disabled { background:#8FA38A; color:var(--on-ink); cursor:not-allowed; opacity:.9; }
+.btn-secondary { background:var(--panel); color:var(--ink); border-color:var(--border); }
+.btn-secondary:hover { background:var(--field); border-color:var(--muted); }
+.btn-ghost { background:var(--field); color:var(--ink-3); border-color:var(--border); }
+.btn-ghost:hover { color:var(--ink); }
+
+.input { height:var(--h-ctl); padding:0 12px; width:100%; border-radius:var(--r-ctl);
+  background:var(--field); border:1px solid var(--border); color:var(--ink);
+  font: 600 var(--fs-md) var(--font); font-variant-numeric:tabular-nums; outline:none;
+  transition: border-color var(--t-fast), box-shadow var(--t-fast); }
+.input::placeholder { color:var(--muted); font-weight:500; }
+.input:focus { border-color:var(--ink); box-shadow:0 0 0 3px var(--tint-ink); }
+.field-row { display:flex; gap:8px; }
+
+/* segmented pill: [1h ▾][LIVE] */
+.seg { display:inline-flex; border:1px solid var(--border); border-radius:var(--r-seg); overflow:hidden; }
+.seg > * { height:26px; padding:0 7px; background:none; border:0; font:500 var(--fs-base) var(--font);
+  color:var(--ink); cursor:pointer; transition: background var(--t-fast); }
+.seg > * + * { border-left:1px solid var(--border); }
+.seg > *:hover { background:var(--field); }
+.seg .live { font-size:var(--fs-label); font-weight:700; letter-spacing:.05em; text-transform:uppercase; color:var(--pos); }
+.field-row .btn { min-width:84px; }
+
+.dot-live { width:6px; height:6px; border-radius:50%; background:var(--pos-bright); box-shadow:var(--glow-pos);
+  animation: pulse 1.6s ease-in-out infinite; }
+@keyframes pulse { 50% { opacity:.45; } }
+
+/* ---------------- Badges ---------------- */
+.badge { display:inline-block; padding:2px 7px; border-radius:var(--r-ctl);
+  font-size:var(--fs-micro); font-weight:700; letter-spacing:.04em; text-transform:uppercase; }
+.badge-neg { background:var(--tint-neg); color:var(--neg); }
+.badge-pos { background:var(--tint-pos); color:var(--pos); }
+.badge-ink { background:var(--tint-ink); color:var(--ink); }
+
+/* ---------------- Tables ---------------- */
+.table { width:100%; border-collapse:collapse; }
+.table th { text-align:left; height:26px; padding:0 14px; font-size:var(--fs-xs); font-weight:600;
+  letter-spacing:.05em; text-transform:uppercase; color:var(--muted);
+  border-bottom:1px solid var(--border-soft); position:sticky; top:0; background:var(--panel); }
+.table td { padding:4px 14px; font-size:var(--fs-sm); line-height:1.5; color:var(--ink);
+  border-bottom:1px solid var(--border-faint); font-variant-numeric:tabular-nums; }
+.table tr:hover td { background:rgba(42,37,32,.03); }
+.table td.amt { font-weight:700; }
+
+/* ---------------- Chart helpers ---------------- */
+.axis-tag { display:inline-block; padding:1px 4px; border-radius:2px; font-size:var(--fs-xs);
+  font-weight:600; background:var(--ink); color:var(--on-ink); font-variant-numeric:tabular-nums; }
+.axis-tag.pos { background:var(--pos); }
+.axis-tag.rust { background:var(--rust); }
+.chart-callout { padding:2px 6px; border:1px solid var(--pos); border-radius:2px; background:var(--field);
+  font-size:var(--fs-micro); font-weight:700; text-transform:uppercase; color:var(--pos); }
+
+/* ---------------- Responsive ---------------- */
+@media (max-width: 900px) {
+  .mosaic { grid-template-columns: 1fr !important; }
+  .nav { overflow-x:auto; }
+}
+@media (prefers-reduced-motion: reduce) { * { animation:none !important; transition:none !important; } }

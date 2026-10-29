@@ -1,0 +1,28 @@
+# Foundry
+contracts/out/
+contracts/cache/
+contracts/broadcast/
+contracts/lib/
+
+# Node
+node_modules/
+dist/
+.env
+.env.*
+!.env.example
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Prisma / DB
+*.sqlite
+
+# Lovable frontend — tracked in its own repo (syncs to Lovable); not part of this repo
+frontend/

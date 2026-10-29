@@ -1,0 +1,120 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+/// A leveraged position mirrored from on-chain PositionOpened/Closed/Liquidated events.
+model Position {
+  id             BigInt    @id // on-chain position id
+  trader         String
+  token          String
+  isLong         Boolean
+  leverage       Int
+  collateral     String // wei
+  entryPrice     String // 1e18
+  maxPayout      String // wei
+  tpPrice        String    @default("0")
+  slPrice        String    @default("0")
+  isOpen         Boolean   @default(true)
+  openTimestamp  BigInt
+  openTxHash     String
+  openBlock      BigInt
+
+  // settlement (filled on close/liquidation)
+  closeTimestamp BigInt?
+  closeTxHash    String?
+  pnl            String? // signed wei (string)
+  borrowFee      String?
+  closeFee       String?
+  traderOut      String?
+  liquidated     Boolean   @default(false)
+  keeper         String?
+  keeperReward   String?
+  badDebt        String?
+
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@index([trader])
+  @@index([token])
+  @@index([isOpen])
+  @@index([openTimestamp])
+}
+
+/// Vault LP events (deposit, withdraw, fees, losses) for the pool page + APY series.
+model PoolEvent {
+  id        String   @id @default(cuid())
+  kind      String // deposit | withdrawRequested | withdraw | fee | loss | badDebt | reserved | released
+  account   String?
+  amount    String // wei
+  shares    String?  @default("0")
+  txHash    String
+  block     BigInt
+  timestamp BigInt
+  createdAt DateTime @default(now())
+
+  @@index([kind])
+  @@index([account])
+  @@index([timestamp])
+}
+
+/// Rolling per-token market stats, recomputed by the indexer.
+model TokenStats {
+  token        String   @id
+  symbol       String?
+  name         String?
+  route        String   @default("V2") // V2 | V3 | NONE
+  lastPrice    String   @default("0") // 1e18
+  volume24h    String   @default("0")
+  longOi       String   @default("0")
+  shortOi      String   @default("0")
+  reserveBnb   String   @default("0")
+  tradeCount   Int      @default(0)
+  updatedAt    DateTime @updatedAt
+}
+
+/// Oracle snapshots kept for the price chart (one row per observed snapshot).
+model OracleSnapshot {
+  id         String   @id @default(cuid())
+  token      String
+  price      String // 1e18
+  timestamp  BigInt
+  block      BigInt
+  createdAt  DateTime @default(now())
+
+  @@index([token, timestamp])
+}
+
+/// Aggregated per-trader leaderboard stats.
+model Leaderboard {
+  trader      String   @id
+  realizedPnl String   @default("0") // signed wei
+  volume      String   @default("0")
+  wins        Int      @default(0)
+  losses      Int      @default(0)
+  bestTrade   String   @default("0")
+  updatedAt   DateTime @updatedAt
+}
+
+/// Periodic vault snapshots for LP transparency (share-price series, APY, worst-day drawdown).
+model PoolSnapshot {
+  id             Int      @id @default(autoincrement())
+  sharePrice     String // 1e18
+  nav            String
+  utilizationBps Int
+  timestamp      BigInt
+  block          BigInt
+  createdAt      DateTime @default(now())
+
+  @@index([timestamp])
+}
+
+/// Indexer cursor so backfills resume from the last processed block.
+model IndexerState {
+  id        String @id @default("singleton")
+  lastBlock BigInt @default(0)
+}

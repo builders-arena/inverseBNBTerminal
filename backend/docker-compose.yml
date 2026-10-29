@@ -1,0 +1,74 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: inverse
+      POSTGRES_PASSWORD: inverse
+      POSTGRES_DB: inverse
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U inverse"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # ---- application services (opt-in: `docker compose --profile services up`) ----
+  api:
+    build: .
+    profiles: ["services", "api"]
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      SERVICE: api
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  indexer:
+    build: .
+    profiles: ["services", "indexer"]
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      SERVICE: indexer
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  keeper:
+    build: .
+    profiles: ["services", "keeper"]
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      SERVICE: keeper
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  relayer:
+    build: .
+    profiles: ["services", "relayer"]
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      SERVICE: relayer
+    ports:
+      - "8081:8081"
+
+  warmer:
+    build: .
+    profiles: ["services", "warmer"]
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      SERVICE: warmer
+
+volumes:
+  pgdata:
