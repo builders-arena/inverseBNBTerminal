@@ -48,6 +48,10 @@ const schema = z.object({
   // CSV of "synthTokenAddr:0xpythFeedId" pairs. synthTokenAddr is the market's on-chain id
   // (the address registered via OracleRouter.setSource / PythAdapter.setFeed).
   PYTH_MARKETS: z.string().default(""),
+  // CSV of Chainlink (push-feed) market token ids registered via OracleRouter.setSource(CHAINLINK).
+  // Chainlink needs no backend poster (nodes keep it fresh on-chain); this list only tells the indexer
+  // which feed markets to sample for the candle series. No feed id needed — the on-chain adapter prices.
+  CHAINLINK_MARKETS: z.string().default(""),
   // How often the warmer posts fresh Pyth updates on-chain. Must be comfortably below the
   // adapter's maxAge (default 60s) so feed prices never go stale between posts.
   PYTH_POST_INTERVAL_MS: z.coerce.number().default(15000),
@@ -104,3 +108,9 @@ export const pythMarkets: PythMarket[] = config.PYTH_MARKETS.split(",")
 
 /// Lookup from (lowercased) token id to its Pyth market.
 export const pythByToken = new Map<string, PythMarket>(pythMarkets.map((m) => [m.token, m]));
+
+/// Chainlink (push-feed) market token ids, lowercased. Priced on-chain by Chainlink's nodes, so no
+/// backend posting is needed — the indexer samples these for the candle series like any other market.
+export const chainlinkMarketTokens: string[] = config.CHAINLINK_MARKETS.split(",")
+  .map((t) => t.trim().toLowerCase())
+  .filter((t) => t.length > 0);
