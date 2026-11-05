@@ -1,0 +1,80 @@
+# Fly.io deployment for the Inverse BNB backend (BSC testnet, Chainlink push oracle).
+# One image (Dockerfile), three long-running process groups sharing it. The api group is the only
+# one with a public HTTP service; indexer and keeper are internal workers.
+#
+# Non-secret config lives in [env]; secrets (DATABASE_URL via `fly postgres attach`,
+# KEEPER_PRIVATE_KEY via `fly secrets set`) are NOT in this file.
+#
+#   fly deploy            # build + release (runs prisma db push) + roll the 3 machines
+#   fly logs -a <app>     # tail; fly status -a <app>
+
+app = "inverse-bnb-testnet-be"
+primary_region = "iad"
+
+[build]
+  dockerfile = "Dockerfile"
+
+# Runs once per deploy in a temporary machine (has the app's env + secrets). No migrations dir in this
+# project, so push the schema rather than `migrate deploy`. db push issues DDL + a session advisory
+# lock, which a transaction-mode pooler (pgbouncer) can't hold, so it runs against the DIRECT endpoint
+# (DATABASE_URL_DIRECT); the long-running services keep the pooled DATABASE_URL (with ?pgbouncer=true).
+[deploy]
+  release_command = "sh -c 'DATABASE_URL=$DATABASE_URL_DIRECT npx prisma db push --skip-generate'"
+
+[env]
+  CHAIN_ID = "97"
+  # publicnode allows eth_getLogs over wide ranges; the data-seed node rate-limits it (-32005), which
+  # broke the indexer backfill and the api's chain listener. data-seed kept as a fallback.
+  RPC_URL_PRIMARY = "https://bsc-testnet-rpc.publicnode.com"
+  RPC_URL_SECONDARY = "https://data-seed-prebsc-1-s1.bnbchain.org:8545"
+  # Collateral/settlement = testnet WBNB.
+  WBNB_ADDRESS = "0xae13d989daC2f0dEbFf460aC112a837C89BAa7cd"
+  DEPLOY_BLOCK = "140989991"
+  # BTC/USD market routed to CHAINLINK (no Chainlink SOL feed on testnet). No Pyth poster.
+  CHAINLINK_MARKETS = "0x0000000000000000000000000000000000000401"
+  API_PORT = "8080"
+  API_HOST = "0.0.0.0"
+  CORS_ORIGIN = "*"
+  LOG_LEVEL = "info"
+  # NOTE: the five required contract addresses are set via `fly secrets set` rather than [env].
+  # Fly reliably *declared* them here but intermittently failed to inject VAULT_ADDRESS into the
+  # process; secrets use a separate, reliable injection path. See the deploy block / RUNBOOK:
+  #   ORACLE_ADDRESS VAULT_ADDRESS ENGINE_ADDRESS SESSION_MANAGER_ADDRESS FEE_DISTRIBUTOR_ADDRESS
+
+[processes]
+  api = "node dist/services/api.js"
+  indexer = "node dist/services/indexer.js"
+  keeper = "node dist/services/keeper.js"
+
+# Public HTTP service — api process group only.
+[[services]]
+  internal_port = 8080
+  protocol = "tcp"
+  processes = ["api"]
+
+  [[services.ports]]
+    port = 80
+    handlers = ["http"]
+    force_https = true
+
+  [[services.ports]]
+    port = 443
+    handlers = ["tls", "http"]
+
+  [services.concurrency]
+    type = "connections"
+    hard_limit = 200
+    soft_limit = 150
+
+  [[services.http_checks]]
+    interval = "15s"
+    timeout = "5s"
+    grace_period = "20s"
+    method = "get"
+    path = "/health"
+
+# Keep machines always-on: the indexer and keeper must never be suspended (keeper liveness is
+# safety-critical), so do not enable autostop anywhere in this app.
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"

@@ -1,0 +1,10 @@
+# Keep the build context small and free of secrets. The image installs deps itself and copies only
+# package.json / prisma / tsconfig / src; dist is produced in the build stage.
+node_modules
+dist
+.git
+.env
+.env.*
+*.log
+.DS_Store
+deploy/RUNBOOK.md
