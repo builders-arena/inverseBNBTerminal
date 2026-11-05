@@ -14,6 +14,8 @@ const DAY = 86_400n;
 
 async function main(): Promise<void> {
   const provider = makeProvider();
+  // Swallow provider-level RPC errors (e.g. 429 rate limits) so event polling never crashes the api.
+  provider.on("error", (err) => logger.warn({ err }, "rpc provider error (ignored)"));
   const c = contracts(provider);
 
   const app = Fastify({ logger: false });
@@ -341,6 +343,12 @@ async function pushPoolAndPrices(
     logger.debug({ err }, "pool push skipped");
   }
 }
+
+// Keep the daemon alive through transient RPC faults (rate limits, dropped sockets). These would
+// otherwise bubble up from ethers' event poller as unhandled rejections and exit the process,
+// which on Fly causes a restart-storm that amplifies the RPC load.
+process.on("unhandledRejection", (reason) => logger.error({ reason }, "unhandledRejection (continuing)"));
+process.on("uncaughtException", (err) => logger.error({ err }, "uncaughtException (continuing)"));
 
 main().catch((err) => {
   logger.error({ err }, "api fatal");

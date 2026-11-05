@@ -22,15 +22,15 @@ primary_region = "iad"
   release_command = "sh -c 'DATABASE_URL=$DATABASE_URL_DIRECT npx prisma db push --skip-generate'"
 
 [env]
-  CHAIN_ID = "97"
-  # publicnode allows eth_getLogs over wide ranges; the data-seed node rate-limits it (-32005), which
-  # broke the indexer backfill and the api's chain listener. data-seed kept as a fallback.
-  RPC_URL_PRIMARY = "https://bsc-testnet-rpc.publicnode.com"
-  RPC_URL_SECONDARY = "https://data-seed-prebsc-1-s1.bnbchain.org:8545"
-  # Collateral/settlement = testnet WBNB.
-  WBNB_ADDRESS = "0xae13d989daC2f0dEbFf460aC112a837C89BAa7cd"
-  DEPLOY_BLOCK = "140989991"
-  # BTC/USD market routed to CHAINLINK (no Chainlink SOL feed on testnet). No Pyth poster.
+  # ROBINHOOD CHAIN mainnet (Arbitrum Orbit L2, gas in ETH). Settle in ETH via WETH collateral.
+  CHAIN_ID = "4663"
+  # RPC_URL_PRIMARY is a Fly SECRET (Alchemy dedicated endpoint — the URL embeds the API key).
+  # The public endpoint rate-limits (429) and crash-looped the api, so it is only the fallback.
+  RPC_URL_SECONDARY = "https://rpc.mainnet.chain.robinhood.com"
+  # Collateral/settlement = WETH (18-dec).
+  WBNB_ADDRESS = "0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73"
+  DEPLOY_BLOCK = "106993441"
+  # BTC/USD market routed to CHAINLINK (no SOL feed on Robinhood Chain). No Pyth poster.
   CHAINLINK_MARKETS = "0x0000000000000000000000000000000000000401"
   API_PORT = "8080"
   API_HOST = "0.0.0.0"

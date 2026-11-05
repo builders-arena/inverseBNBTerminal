@@ -29,3 +29,6 @@ frontend/
 
 # mainnet deployer key (never commit)
 *.deployer_key
+
+# mainnet keeper hot-wallet key (never commit)
+*.keeper_key

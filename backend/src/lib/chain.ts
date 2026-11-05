@@ -8,14 +8,15 @@ export function makeProvider(): ethers.AbstractProvider {
   const urls = [config.RPC_URL_PRIMARY, config.RPC_URL_SECONDARY].filter(
     (u): u is string => Boolean(u),
   );
-  const providers = urls.map((url, i) => ({
-    provider: new ethers.JsonRpcProvider(url, network, { staticNetwork: network }),
-    priority: i + 1,
-    weight: 1,
-    stallTimeout: 2000,
-  }));
+  const providers = urls.map((url, i) => {
+    const jp = new ethers.JsonRpcProvider(url, network, { staticNetwork: network });
+    // Slow the event-subscription poll so we stay within RPC rate limits (dedicated or public).
+    jp.pollingInterval = 10_000;
+    return { provider: jp, priority: i + 1, weight: 1, stallTimeout: 2000 };
+  });
   if (providers.length === 1) return providers[0].provider;
   // quorum 1: first healthy provider wins (RPCs are not independently trustworthy here).
+  // The underlying JsonRpcProviders carry the 10s pollingInterval set above.
   return new ethers.FallbackProvider(providers, network, { quorum: 1 });
 }
 
