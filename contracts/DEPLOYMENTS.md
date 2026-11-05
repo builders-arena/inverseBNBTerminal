@@ -1,5 +1,46 @@
 # Deployments
 
+## Robinhood Chain (chain 4663) — MAINNET — 2026-11-06
+
+Live mainnet deployment on Robinhood Chain (Arbitrum Orbit L2; gas paid in ETH). Markets are priced by
+Chainlink Data Feeds (push, no poster) and **settled in ETH** via WETH collateral (ratio-based PnL in
+the WETH asset). There is no SOL/USD feed on this chain, so the flagship market is **BTC/USD**.
+
+Deployer / guardian (INTERIM — hand off to a 2-of-3 Safe before seeding liquidity): `0x34a87c1AD83cB466a479AB32fa34eD0be59dFd70`
+Collateral/settlement (ASSET): WETH `0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73` (18 decimals)
+RPC: `https://rpc.mainnet.chain.robinhood.com` · Explorer: `https://robinhoodchain.blockscout.com` · Deploy block ≈ 106995386
+
+| Contract         | Address                                      |
+| ---------------- | -------------------------------------------- |
+| OracleRouter     | `0xff5033731E3C644Fd14E08A072224fa1B286d226` |
+| ChainlinkAdapter | `0xebd1F5D15dF191d37880e9effDE7cEB1B208Fe25` |
+| PriceOracle¹     | `0x6E36d5Ff8d105dbB8C6335e9cbA0aC27CAe814D2` |
+| InverseVault     | `0x8529169C7DFe82eAa9c51F0Fd6a967b3e76cD3F9` |
+| FeeDistributor   | `0xD7C065F501ad10eF4d7D8C34b9D1Cc88B6E4EDbb` |
+| InverseEngine    | `0x2effDFB516bfF45503901e58Fb715e582328C53F` |
+| SessionManager   | `0x9Ba442DD6aE97f5219Bb53eEaeAe76D2f7eeDdAC` |
+| KeeperFunder     | `0x71C1c81d130719D9334743E43ed7453176b64d68` |
+
+¹ PriceOracle is a DEX-less shell (no PancakeSwap on this chain); its WBNB/factory slots are non-zero
+placeholders (`WBNB`=WETH, `V2`=0x..01, `V3`=0x..02) and are never called — every market routes through
+the Chainlink adapter.
+
+### Markets
+
+| Market  | Synthetic id                                 | Chainlink aggregator                         | Heartbeat | Depth |
+| ------- | -------------------------------------------- | -------------------------------------------- | --------- | ----- |
+| BTC/USD | `0x0000000000000000000000000000000000000401` | `0xa2c5184bF03d373Dc9dE4876eb4Bce595B460251` | 90000s    | 50e18 |
+
+Stage 0: pool cap 200 ETH, max position 0.5 ETH, max leverage 2×, payout cap 3%. No LP seeded.
+All Robinhood-Chain Chainlink feeds are 24h-heartbeat / 0.5%-deviation, so the market staleness window
+is set to 25h (90000s). Verified on-chain: `OracleRouter.getPrice(BTC)` ≈ $76,387 (1e18-scaled),
+`isSupported=true`, `halted=false`.
+
+**Pending before real use:** (1) transfer guardianship to a 2-of-3 Safe (two-step transfer/accept) and
+retire the interim key, *before* any liquidity; (2) seed WETH liquidity; (3) point the backend
+(`CHAIN_ID=4663`, RPC, these addresses, `CHAINLINK_MARKETS`=the BTC id) and the frontend feed-market
+config at this deployment. Config staged in `contracts/.env.robinhood` (gitignored).
+
 ## BSC Testnet (chain 97) — 2026-11-05
 
 First live deployment: Inverse BNB with the Pyth multi-source oracle. SOL is priced

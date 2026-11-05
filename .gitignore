@@ -26,3 +26,6 @@ npm-debug.log*
 
 # Lovable frontend — tracked in its own repo (syncs to Lovable); not part of this repo
 frontend/
+
+# mainnet deployer key (never commit)
+*.deployer_key
