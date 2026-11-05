@@ -38,8 +38,13 @@ const schema = z.object({
   // ---- Pyth (cross-chain / feed-priced markets, e.g. SOL — settled in BNB) ----
   // On-chain Pyth contract on BSC. Unset => Pyth posting is disabled (POOL-only deployment).
   PYTH_ADDRESS: z.string().optional(),
-  // Hermes price-service base URL used to fetch signed update blobs.
-  HERMES_URL: z.string().url().default("https://hermes.pyth.network"),
+  // Hermes price-service base URL used to fetch signed update blobs. Since the 2026-08-26 Pyth
+  // ("Pyth Pro") upgrade the keyless hermes.pyth.network is gone; Hermes is served under dourolabs
+  // and requires an API key (see PYTH_API_KEY).
+  HERMES_URL: z.string().url().default("https://pyth.dourolabs.app/hermes"),
+  // Pyth API key (free from https://app.pyth.com -> "View your API key"). Sent as a Bearer token on
+  // Hermes requests. Required for posting since the Pyth Pro upgrade; unset => Hermes returns 401.
+  PYTH_API_KEY: z.string().optional(),
   // CSV of "synthTokenAddr:0xpythFeedId" pairs. synthTokenAddr is the market's on-chain id
   // (the address registered via OracleRouter.setSource / PythAdapter.setFeed).
   PYTH_MARKETS: z.string().default(""),

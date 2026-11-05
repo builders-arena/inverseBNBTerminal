@@ -28,12 +28,19 @@ export function allPythFeedIds(): string[] {
 /// hex byte strings suitable for `updatePriceFeeds` (usually a single merged blob covering all ids).
 export async function fetchHermesUpdateData(feedIds: string[]): Promise<string[]> {
   if (feedIds.length === 0) return [];
-  const url = new URL("/v2/updates/price/latest", config.HERMES_URL);
+  // HERMES_URL may be a bare host or include a base path (e.g. ".../hermes"); preserve that path.
+  const base = config.HERMES_URL.endsWith("/") ? config.HERMES_URL : `${config.HERMES_URL}/`;
+  const url = new URL("v2/updates/price/latest", base);
   for (const id of feedIds) url.searchParams.append("ids[]", id);
   url.searchParams.set("encoding", "hex");
-  const res = await fetch(url, { signal: AbortSignal.timeout(10_000) });
+  // Since the 2026-08-26 Pyth Pro upgrade Hermes requires a Bearer API key; without it the request
+  // 401s. The key is free (https://app.pyth.com). Left optional so self-hosted/legacy Hermes still works.
+  const headers: Record<string, string> = {};
+  if (config.PYTH_API_KEY) headers.Authorization = `Bearer ${config.PYTH_API_KEY}`;
+  const res = await fetch(url, { headers, signal: AbortSignal.timeout(10_000) });
   if (!res.ok) {
-    throw new Error(`Hermes ${res.status}: ${(await res.text()).slice(0, 200)}`);
+    const hint = res.status === 401 ? " (set PYTH_API_KEY — free from https://app.pyth.com)" : "";
+    throw new Error(`Hermes ${res.status}${hint}: ${(await res.text()).slice(0, 200)}`);
   }
   const body = (await res.json()) as { binary?: { data?: string[] } };
   const data = body.binary?.data ?? [];
