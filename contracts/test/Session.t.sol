@@ -149,4 +149,69 @@ contract SessionTest is Base {
         session.executeClose(ci, abi.encodePacked(r, s, v));
         assertFalse(engine.getPosition(posId).isOpen);
     }
+
+    // ---- replay / nonce / expiry / budget (relay security) ----
+
+    /// @dev A consumed intent cannot be replayed: the session nonce advanced past it.
+    function test_executeIntent_replayReverts() public {
+        uint256 id = _create();
+        ISessionManager.TradeIntent memory it = _tradeIntent(id, 0);
+        bytes memory sig = _signTrade(it);
+        session.executeIntent(it, sig); // consumes nonce 0 -> s.nonce = 1
+
+        vm.prank(keeper);
+        vm.expectRevert(abi.encodeWithSelector(Errors.BadNonce.selector, uint256(1), uint256(0)));
+        session.executeIntent(it, sig); // same signed intent, replayed
+    }
+
+    function test_executeIntent_wrongNonceReverts() public {
+        uint256 id = _create();
+        ISessionManager.TradeIntent memory it = _tradeIntent(id, 5); // session expects nonce 0
+        bytes memory sig = _signTrade(it);
+        vm.prank(keeper);
+        vm.expectRevert(abi.encodeWithSelector(Errors.BadNonce.selector, uint256(0), uint256(5)));
+        session.executeIntent(it, sig);
+    }
+
+    /// @dev Opens are rejected once the session window has passed.
+    function test_executeIntent_sessionExpiredReverts() public {
+        uint256 id = _create();
+        uint256 expiry = session.getSession(id).expiry;
+        ISessionManager.TradeIntent memory it = _tradeIntent(id, 0);
+        bytes memory sig = _signTrade(it);
+
+        vm.warp(expiry + 1);
+        vm.prank(keeper);
+        vm.expectRevert(abi.encodeWithSelector(Errors.SessionExpired.selector, expiry));
+        session.executeIntent(it, sig);
+    }
+
+    /// @dev A per-intent deadline in the past is rejected even while the session is still live.
+    function test_executeIntent_pastDeadlineReverts() public {
+        uint256 id = _create();
+        ISessionManager.TradeIntent memory it = _tradeIntent(id, 0);
+        it.deadline = block.timestamp - 1; // already past (session itself still within its 1h window)
+        bytes memory sig = _signTrade(it);
+
+        vm.prank(keeper);
+        vm.expectRevert(abi.encodeWithSelector(Errors.SessionExpired.selector, block.timestamp - 1));
+        session.executeIntent(it, sig);
+    }
+
+    /// @dev Cumulative spend cannot exceed the session budget even when each trade is within maxPerTrade.
+    function test_executeIntent_budgetExceededReverts() public {
+        vm.prank(signer);
+        uint256 id = session.createSession(1 ether, 1 ether, 1 hours); // budget == maxPerTrade
+
+        ISessionManager.TradeIntent memory it0 = _tradeIntent(id, 0); // amount 1 ether
+        session.executeIntent(it0, _signTrade(it0)); // spent = budget
+
+        ISessionManager.TradeIntent memory it1 = _tradeIntent(id, 1); // another 1 ether
+        bytes memory sig1 = _signTrade(it1);
+        vm.prank(keeper);
+        vm.expectRevert(
+            abi.encodeWithSelector(Errors.SessionBudgetExceeded.selector, uint256(1 ether), uint256(1 ether), uint256(1 ether))
+        );
+        session.executeIntent(it1, sig1);
+    }
 }
