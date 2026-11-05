@@ -28,9 +28,8 @@ interface IInverseEngine {
     }
 
     // ---- Trader actions ----
-    function openPosition(address token, bool isLong, uint8 leverage, uint256 tpPrice, uint256 slPrice)
+    function openPosition(uint256 amount, address token, bool isLong, uint8 leverage, uint256 tpPrice, uint256 slPrice)
         external
-        payable
         returns (uint256 id);
 
     function closePosition(uint256 id) external;
@@ -42,13 +41,14 @@ interface IInverseEngine {
 
     // ---- SessionManager only ----
     function openPositionFor(
+        uint256 amount,
         address trader,
         address token,
         bool isLong,
         uint8 leverage,
         uint256 tpPrice,
         uint256 slPrice
-    ) external payable returns (uint256 id);
+    ) external returns (uint256 id);
 
     function closePositionFor(address trader, uint256 id) external;
 
@@ -61,4 +61,7 @@ interface IInverseEngine {
     function getUnrealized(uint256 id) external view returns (int256 pnl, uint256 borrowFee);
     function getTokenOi(address token) external view returns (uint256);
     function isLiquidatable(uint256 id) external view returns (bool);
+
+    /// @notice Max leverage `token` currently allows (depth tier capped by the global gate); 0 = untradeable.
+    function maxLeverageFor(address token) external view returns (uint8);
 }

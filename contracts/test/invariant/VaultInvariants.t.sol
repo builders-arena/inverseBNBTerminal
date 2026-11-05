@@ -20,7 +20,7 @@ contract VaultInvariantsTest is Base {
 
     /// @dev The vault's BNB balance must always be at least the sum of reserved max payouts.
     function invariant_solvent() public view {
-        assertGe(address(vault).balance, vault.reserved());
+        assertGe(collateral.balanceOf(address(vault)), vault.reserved());
     }
 
     /// @dev Share price stays strictly positive while shares exist (no division-by-zero / wipeout).

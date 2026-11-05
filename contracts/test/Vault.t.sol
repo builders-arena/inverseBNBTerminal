@@ -7,7 +7,7 @@ import {Errors} from "../src/libraries/Errors.sol";
 contract VaultTest is Base {
     function test_firstDeposit_locksMinShares() public {
         vm.prank(lp);
-        uint256 shares = vault.deposit{value: 100 ether}();
+        uint256 shares = vault.deposit(100 ether);
         assertEq(vault.totalShares(), 100 ether);
         assertEq(shares, 100 ether - vault.MIN_LOCKED_SHARES());
         assertEq(vault.sharesOf(lp), shares);
@@ -18,9 +18,11 @@ contract VaultTest is Base {
     function test_secondDeposit_proRata() public {
         _fundVault(100 ether);
         address lp2 = makeAddr("lp2");
-        vm.deal(lp2, 50 ether);
-        vm.prank(lp2);
-        uint256 shares = vault.deposit{value: 50 ether}();
+        collateral.mint(lp2, 50 ether);
+        vm.startPrank(lp2);
+        collateral.approve(address(vault), type(uint256).max);
+        uint256 shares = vault.deposit(50 ether);
+        vm.stopPrank();
         assertEq(shares, 50 ether); // price 1:1
         assertEq(vault.totalShares(), 150 ether);
     }
@@ -34,7 +36,7 @@ contract VaultTest is Base {
         vault.setPoolCap(50 ether);
         vm.prank(lp);
         vm.expectRevert(abi.encodeWithSelector(Errors.PoolCapExceeded.selector, uint256(50 ether), uint256(100 ether)));
-        vault.deposit{value: 100 ether}();
+        vault.deposit(100 ether);
     }
 
     function test_depositsPausable_withdrawsNever() public {
@@ -42,7 +44,7 @@ contract VaultTest is Base {
         vault.setDepositsPaused(true);
         vm.prank(lp);
         vm.expectRevert(Errors.DepositsPaused.selector);
-        vault.deposit{value: 1 ether}();
+        vault.deposit(1 ether);
 
         // Withdraw still works (no reserved).
         vm.prank(lp);
@@ -70,10 +72,10 @@ contract VaultTest is Base {
         vault.withdraw(); // cooldown active
 
         vm.warp(block.timestamp + 24 hours);
-        uint256 before = lp.balance;
+        uint256 before = collateral.balanceOf(lp);
         vm.prank(lp);
         vault.withdraw();
-        assertEq(lp.balance - before, 10 ether - exitFee);
+        assertEq(collateral.balanceOf(lp) - before, 10 ether - exitFee);
     }
 
     function test_withdraw_blockedIfPushesUtilTooHigh() public {

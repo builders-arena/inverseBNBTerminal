@@ -31,7 +31,7 @@ interface ISessionManager {
         uint256 deadline;
     }
 
-    function createSession(uint256 maxPerTrade, uint256 duration) external payable returns (uint256 id);
+    function createSession(uint256 budget, uint256 maxPerTrade, uint256 duration) external returns (uint256 id);
     function revokeSession(uint256 id) external;
     function withdrawUnspent(uint256 id) external;
 

@@ -16,11 +16,14 @@ contract SessionTest is Base {
         _warmV2();
         signer = vm.addr(signerPk);
         vm.deal(signer, 100 ether);
+        collateral.mint(signer, 100 ether);
+        vm.prank(signer);
+        collateral.approve(address(session), type(uint256).max);
     }
 
     function _create() internal returns (uint256 id) {
         vm.prank(signer);
-        id = session.createSession{value: 10 ether}(1 ether, 1 hours);
+        id = session.createSession(10 ether, 1 ether, 1 hours);
     }
 
     function _signTrade(ISessionManager.TradeIntent memory it) internal view returns (bytes memory) {
@@ -116,10 +119,10 @@ contract SessionTest is Base {
         ISessionManager.TradeIntent memory it = _tradeIntent(id, 0);
         session.executeIntent(it, _signTrade(it)); // spends 1
 
-        uint256 before = signer.balance;
+        uint256 before = collateral.balanceOf(signer);
         vm.prank(signer);
         session.withdrawUnspent(id);
-        assertEq(signer.balance - before, 9 ether); // 10 budget - 1 spent
+        assertEq(collateral.balanceOf(signer) - before, 9 ether); // 10 budget - 1 spent
     }
 
     function test_closeIntent() public {

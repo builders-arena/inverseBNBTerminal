@@ -16,7 +16,7 @@ contract PnLFuzzTest is Base {
         newWbnb = uint112(bound(uint256(newWbnb), 60 ether, 180 ether));
 
         vm.prank(trader);
-        uint256 id = engine.openPosition{value: 0.2 ether}(address(token), isLong, 2, 0, 0);
+        uint256 id = engine.openPosition(0.2 ether, address(token), isLong, 2, 0, 0);
         uint256 entry = engine.getPosition(id).entryPrice;
         uint256 collateral = engine.getPosition(id).collateral;
         uint256 maxPayout = engine.getPosition(id).maxPayout;

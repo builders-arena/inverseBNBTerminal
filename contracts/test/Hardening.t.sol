@@ -15,7 +15,7 @@ contract HardeningTest is Base {
 
     function _open(uint256 v, bool long, uint8 lev) internal returns (uint256 id) {
         vm.prank(trader);
-        id = engine.openPosition{value: v}(address(token), long, lev, 0, 0);
+        id = engine.openPosition(v, address(token), long, lev, 0, 0);
     }
 
     function test_reserved_tracksOpenPositions() public {
@@ -84,12 +84,12 @@ contract HardeningTest is Base {
     function test_closeBreakeven_returnsCollateralMinusFee() public {
         engine.setBorrowBase(0);
         uint256 id = _open(1 ether, true, 2);
-        uint256 before = trader.balance;
+        uint256 before = collateral.balanceOf(trader);
         _repriceTo(100 ether); // unchanged price
         vm.prank(trader);
         engine.closePosition(id);
         // collateral 0.99, pnl ~0, closeFee 1% of 0.99 => traderOut ~0.9801
-        assertApproxEqAbs(trader.balance - before, 0.9801 ether, 1e12);
+        assertApproxEqAbs(collateral.balanceOf(trader) - before, 0.9801 ether, 1e12);
     }
 }
 

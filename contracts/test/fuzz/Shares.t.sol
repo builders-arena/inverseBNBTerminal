@@ -11,18 +11,18 @@ contract SharesFuzzTest is Base {
 
         uint256 expectedShares = vault.previewDeposit(amount);
         vm.prank(lp);
-        uint256 shares = vault.deposit{value: amount}();
+        uint256 shares = vault.deposit(amount);
         assertEq(shares, expectedShares);
 
         vm.prank(lp);
         vault.requestWithdraw(shares);
         vm.warp(block.timestamp + 1 hours);
-        uint256 before = lp.balance;
+        uint256 before = collateral.balanceOf(lp);
         vm.prank(lp);
         vault.withdraw();
 
         // Only the permanently-locked MIN_LOCKED_SHARES worth of BNB stays behind.
-        assertEq(lp.balance - before, amount - vault.MIN_LOCKED_SHARES());
+        assertEq(collateral.balanceOf(lp) - before, amount - vault.MIN_LOCKED_SHARES());
     }
 
     /// @dev previewDeposit matches actual minted shares for a second depositor at an arbitrary price.
@@ -32,16 +32,20 @@ contract SharesFuzzTest is Base {
 
         amount = bound(amount, 0.01 ether, 1000 ether);
         address lp2 = makeAddr("lp2");
-        vm.deal(lp2, amount);
+        collateral.mint(lp2, amount);
+        vm.startPrank(lp2);
+        collateral.approve(address(vault), type(uint256).max);
         uint256 expected = vault.previewDeposit(amount);
-        vm.prank(lp2);
-        uint256 shares = vault.deposit{value: amount}();
+        uint256 shares = vault.deposit(amount);
+        vm.stopPrank();
         assertEq(shares, expected);
     }
 
     function _fundVaultAs(address who, uint256 amount) internal {
-        vm.deal(who, amount);
-        vm.prank(who);
-        vault.deposit{value: amount}();
+        collateral.mint(who, amount);
+        vm.startPrank(who);
+        collateral.approve(address(vault), type(uint256).max);
+        vault.deposit(amount);
+        vm.stopPrank();
     }
 }

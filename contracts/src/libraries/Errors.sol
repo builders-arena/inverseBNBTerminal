@@ -12,6 +12,7 @@ library Errors {
     error LowLiquidity(address token, uint256 reserveBnb);
     error V3NeedsCardinality(address pool, uint16 have, uint16 need);
     error Halted(address token);
+    error ConfidenceTooWide(address token, uint256 confBps, uint256 maxBps); // Pyth feed too uncertain
 
     // ---- Vault ----
     error InsufficientNav(uint256 requested, uint256 available);

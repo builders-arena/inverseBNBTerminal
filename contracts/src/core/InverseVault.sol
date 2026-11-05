@@ -2,17 +2,24 @@
 pragma solidity 0.8.24;
 
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {IInverseVault} from "../interfaces/IInverseVault.sol";
 import {Errors} from "../libraries/Errors.sol";
 import {Governed} from "../libraries/Governed.sol";
 
 /// @title  InverseVault
-/// @notice Native-BNB liquidity vault with ERC-4626-style internal shares. LPs are the counterparty
-///         to all traders. Share value = vault balance / total shares; trader losses/fees flow in and
-///         raise it, trader profits flow out and lower it. `reserved` earmarks the max payout owed to
-///         currently-open positions so the vault stays solvent.
+/// @notice ERC-20-collateral (e.g. USDC) liquidity vault with ERC-4626-style internal shares. LPs are
+///         the counterparty to all traders. Share value = vault balance / total shares; trader
+///         losses/fees flow in and raise it, trader profits flow out and lower it. `reserved` earmarks
+///         the max payout owed to currently-open positions so the vault stays solvent. NAV is the
+///         vault's collateral balance, so share accounting is identical to the former native design
+///         (the MIN_LOCKED_SHARES burn still guards the first-depositor inflation vector).
 contract InverseVault is IInverseVault, Governed, ReentrancyGuard {
+    using SafeERC20 for IERC20;
+
     // ---- Config ----
+    IERC20 public immutable asset; // collateral token (settlement asset, e.g. USDC)
     uint256 public constant MIN_LOCKED_SHARES = 1e3; // burned on first deposit (inflation-attack guard)
     uint256 public constant MAX_RESERVE_UTIL_BPS = 9000; // opening cannot push utilization past 90%
     uint256 public constant MAX_WITHDRAW_UTIL_BPS = 9500; // withdrawals cannot push utilization past 95%
@@ -24,7 +31,7 @@ contract InverseVault is IInverseVault, Governed, ReentrancyGuard {
     uint256 public override totalShares;
     uint256 public override reserved;
     uint256 public cumulativeBadDebt; // transparency stat; LP losses are socialised via share price
-    uint256 public override cumulativeDeposits; // total BNB ever deposited (drives the LP bootstrap boost)
+    uint256 public override cumulativeDeposits; // total collateral ever deposited (drives the LP bootstrap boost)
 
     mapping(address => uint256) public firstDepositEpoch; // when an LP first deposited (early-LP tag)
 
@@ -55,23 +62,26 @@ contract InverseVault is IInverseVault, Governed, ReentrancyGuard {
         _;
     }
 
-    constructor(address guardian_) Governed(guardian_) {}
+    constructor(address asset_, address guardian_) Governed(guardian_) {
+        if (asset_ == address(0)) revert Errors.ZeroAddress();
+        asset = IERC20(asset_);
+    }
 
     // =========================================================================
     //                                 LP ACTIONS
     // =========================================================================
 
     /// @inheritdoc IInverseVault
-    function deposit() external payable nonReentrant returns (uint256 shares) {
+    function deposit(uint256 amount) external nonReentrant returns (uint256 shares) {
         if (depositsPaused) revert Errors.DepositsPaused();
-        uint256 amount = msg.value;
         if (amount == 0) revert Errors.ZeroAmount();
 
-        // NAV excluding the just-received deposit.
-        uint256 navBefore = address(this).balance - amount;
+        // NAV before pulling the deposit in.
+        uint256 navBefore = asset.balanceOf(address(this));
         if (poolCap != 0 && navBefore + amount > poolCap) {
             revert Errors.PoolCapExceeded(poolCap, navBefore + amount);
         }
+        asset.safeTransferFrom(msg.sender, address(this), amount);
 
         if (totalShares == 0) {
             if (amount <= MIN_LOCKED_SHARES) revert Errors.ZeroShares();
@@ -106,7 +116,7 @@ contract InverseVault is IInverseVault, Governed, ReentrancyGuard {
         if (block.timestamp < req.readyAt) revert Errors.CooldownActive(req.readyAt);
         if (req.shares > sharesOf[msg.sender]) revert Errors.ZeroShares();
 
-        uint256 bal = address(this).balance;
+        uint256 bal = asset.balanceOf(address(this));
         amount = (req.shares * bal) / totalShares;
         uint256 exitFee = (amount * _exitFeeBps(utilizationBps())) / 10_000;
         uint256 payout = amount - exitFee;
@@ -125,7 +135,7 @@ contract InverseVault is IInverseVault, Governed, ReentrancyGuard {
         delete withdrawRequests[msg.sender];
 
         emit Withdraw(msg.sender, req.shares, amount, exitFee);
-        _sendBnb(msg.sender, payout);
+        asset.safeTransfer(msg.sender, payout);
     }
 
     // =========================================================================
@@ -135,7 +145,7 @@ contract InverseVault is IInverseVault, Governed, ReentrancyGuard {
     /// @inheritdoc IInverseVault
     function reserve(uint256 amount) external onlyEngine {
         uint256 newReserved = reserved + amount;
-        uint256 bal = address(this).balance;
+        uint256 bal = asset.balanceOf(address(this));
         if (bal == 0 || (newReserved * 10_000) / bal > MAX_RESERVE_UTIL_BPS) {
             revert Errors.UtilizationTooHigh(bal == 0 ? type(uint256).max : (newReserved * 10_000) / bal, MAX_RESERVE_UTIL_BPS);
         }
@@ -153,18 +163,21 @@ contract InverseVault is IInverseVault, Governed, ReentrancyGuard {
     function payTrader(address to, uint256 amount) external onlyEngine nonReentrant {
         if (amount == 0) return;
         emit TraderPaid(to, amount);
-        _sendBnb(to, amount);
+        asset.safeTransfer(to, amount);
     }
 
     /// @inheritdoc IInverseVault
-    function receiveLoss() external payable onlyEngine {
-        emit LossReceived(msg.value);
+    /// @dev Pulls `amount` of collateral from the engine (which pre-approved the vault). Raises NAV.
+    function receiveLoss(uint256 amount) external onlyEngine {
+        asset.safeTransferFrom(msg.sender, address(this), amount);
+        emit LossReceived(amount);
     }
 
     /// @inheritdoc IInverseVault
-    function receiveFee() external payable {
-        // Accepts fees from the FeeDistributor (or anyone topping up NAV).
-        emit FeeReceived(msg.value);
+    /// @dev Pulls `amount` of collateral from the caller (the FeeDistributor, or anyone topping up NAV).
+    function receiveFee(uint256 amount) external {
+        asset.safeTransferFrom(msg.sender, address(this), amount);
+        emit FeeReceived(amount);
     }
 
     /// @inheritdoc IInverseVault
@@ -179,12 +192,12 @@ contract InverseVault is IInverseVault, Governed, ReentrancyGuard {
 
     /// @inheritdoc IInverseVault
     function nav() public view returns (uint256) {
-        return address(this).balance;
+        return asset.balanceOf(address(this));
     }
 
     /// @inheritdoc IInverseVault
     function utilizationBps() public view returns (uint256) {
-        uint256 bal = address(this).balance;
+        uint256 bal = asset.balanceOf(address(this));
         if (bal == 0) return 0;
         return (reserved * 10_000) / bal;
     }
@@ -192,7 +205,7 @@ contract InverseVault is IInverseVault, Governed, ReentrancyGuard {
     /// @inheritdoc IInverseVault
     function sharePrice() external view returns (uint256) {
         if (totalShares == 0) return 1e18;
-        return (address(this).balance * 1e18) / totalShares;
+        return (asset.balanceOf(address(this)) * 1e18) / totalShares;
     }
 
     /// @inheritdoc IInverseVault
@@ -200,7 +213,7 @@ contract InverseVault is IInverseVault, Governed, ReentrancyGuard {
         if (totalShares == 0) {
             return amount > MIN_LOCKED_SHARES ? amount - MIN_LOCKED_SHARES : 0;
         }
-        return (amount * totalShares) / address(this).balance;
+        return (amount * totalShares) / asset.balanceOf(address(this));
     }
 
     /// @inheritdoc IInverseVault
@@ -210,7 +223,7 @@ contract InverseVault is IInverseVault, Governed, ReentrancyGuard {
         returns (uint256 amount, uint256 exitFee, uint256 cooldown)
     {
         if (totalShares == 0) return (0, 0, 0);
-        amount = (shares * address(this).balance) / totalShares;
+        amount = (shares * asset.balanceOf(address(this))) / totalShares;
         uint256 util = utilizationBps();
         exitFee = (amount * _exitFeeBps(util)) / 10_000;
         cooldown = _cooldownFor(util);
@@ -250,17 +263,4 @@ contract InverseVault is IInverseVault, Governed, ReentrancyGuard {
         emit DepositsPausedSet(paused);
     }
 
-    // =========================================================================
-    //                                 INTERNAL
-    // =========================================================================
-
-    function _sendBnb(address to, uint256 amount) internal {
-        (bool ok,) = to.call{value: amount}("");
-        if (!ok) revert Errors.EthTransferFailed();
-    }
-
-    /// @dev Reject unaccounted direct transfers so balance only grows through tracked paths.
-    receive() external payable {
-        revert Errors.ZeroAmount();
-    }
 }

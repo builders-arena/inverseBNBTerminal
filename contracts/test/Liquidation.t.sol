@@ -15,17 +15,17 @@ contract LiquidationTest is Base {
     function test_liquidate_fullLoss_10x() public {
         // 0.2 BNB @10x: collateral 0.198, notional 1.98 (<= 2% of 100 BNB reserve).
         vm.prank(trader);
-        uint256 id = engine.openPosition{value: 0.2 ether}(address(token), true, 10, 0, 0);
+        uint256 id = engine.openPosition(0.2 ether, address(token), true, 10, 0, 0);
 
         _repriceTo(90 ether); // -10% => 10x => full collateral loss, liquidatable (>=95%)
         assertTrue(engine.isLiquidatable(id));
 
-        uint256 keeperBefore = keeper.balance;
+        uint256 keeperBefore = collateral.balanceOf(keeper);
         vm.prank(keeper);
         engine.liquidate(id);
 
         // keeper reward = 5% of collateral 0.198 = 0.0099
-        assertApproxEqAbs(keeper.balance - keeperBefore, 0.0099 ether, 1e9);
+        assertApproxEqAbs(collateral.balanceOf(keeper) - keeperBefore, 0.0099 ether, 1e9);
         assertFalse(engine.getPosition(id).isOpen);
         assertEq(vault.reserved(), 0);
         assertEq(engine.getTokenOi(address(token)), 0);
@@ -33,7 +33,7 @@ contract LiquidationTest is Base {
 
     function test_notLiquidatable_whenHealthy() public {
         vm.prank(trader);
-        uint256 id = engine.openPosition{value: 1 ether}(address(token), true, 2, 0, 0);
+        uint256 id = engine.openPosition(1 ether, address(token), true, 2, 0, 0);
         _repriceTo(90 ether); // -10% @2x => 20% loss, well under 95%
         assertFalse(engine.isLiquidatable(id));
         vm.prank(keeper);
@@ -43,15 +43,15 @@ contract LiquidationTest is Base {
 
     function test_liquidateBatch_skipsHealthyAndClosed() public {
         vm.prank(trader);
-        uint256 a = engine.openPosition{value: 0.2 ether}(address(token), true, 10, 0, 0);
+        uint256 a = engine.openPosition(0.2 ether, address(token), true, 10, 0, 0);
         vm.prank(trader);
-        uint256 b = engine.openPosition{value: 0.2 ether}(address(token), true, 10, 0, 0);
+        uint256 b = engine.openPosition(0.2 ether, address(token), true, 10, 0, 0);
         vm.prank(trader);
-        uint256 healthy = engine.openPosition{value: 1 ether}(address(token), true, 2, 0, 0);
+        uint256 healthy = engine.openPosition(1 ether, address(token), true, 2, 0, 0);
 
         _repriceTo(90 ether); // 10x positions underwater, 2x healthy (20% loss)
 
-        uint256 keeperBefore = keeper.balance;
+        uint256 keeperBefore = collateral.balanceOf(keeper);
         uint256[] memory ids = new uint256[](3);
         ids[0] = a;
         ids[1] = b;
@@ -63,13 +63,13 @@ contract LiquidationTest is Base {
         assertFalse(engine.getPosition(b).isOpen);
         assertTrue(engine.getPosition(healthy).isOpen); // skipped, not liquidatable
         // keeper earned ~5% of 2 collaterals (0.198 each) == ~0.0198
-        assertApproxEqAbs(keeper.balance - keeperBefore, 0.0198 ether, 1e12);
+        assertApproxEqAbs(collateral.balanceOf(keeper) - keeperBefore, 0.0198 ether, 1e12);
     }
 
     function test_short_liquidatesOnUpMove() public {
         // Short 0.2 @10x; price up 10% => full loss.
         vm.prank(trader);
-        uint256 id = engine.openPosition{value: 0.2 ether}(address(token), false, 10, 0, 0);
+        uint256 id = engine.openPosition(0.2 ether, address(token), false, 10, 0, 0);
         _repriceTo(110 ether); // +10%
         assertTrue(engine.isLiquidatable(id));
         vm.prank(keeper);

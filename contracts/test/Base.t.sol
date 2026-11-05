@@ -25,6 +25,7 @@ contract Base is Test {
     MockV3Factory internal v3Factory;
     MockERC20 internal wbnb;
     MockERC20 internal token;
+    MockERC20 internal collateral; // settlement/collateral asset (USDC-like); 18dp to keep constants
     MockV2Pair internal pair;
 
     address internal treasury = makeAddr("treasury");
@@ -43,13 +44,14 @@ contract Base is Test {
         v3Factory = new MockV3Factory();
         wbnb = new MockERC20("Wrapped BNB", "WBNB", 18);
         token = new MockERC20("Meme", "MEME", 18);
+        collateral = new MockERC20("USD Coin", "USDC", 18);
 
         // Guardian = this test contract.
-        oracle = new PriceOracle(address(wbnb), address(v2Factory), address(v3Factory), address(this));
-        vault = new InverseVault(address(this));
-        feeDistributor = new FeeDistributor(address(vault), treasury, address(this));
-        engine = new InverseEngine(address(oracle), address(vault), address(feeDistributor), address(this));
-        session = new SessionManager(address(engine));
+        oracle = new PriceOracle(address(wbnb), address(v2Factory), address(v3Factory), 10 ether, address(this));
+        vault = new InverseVault(address(collateral), address(this));
+        feeDistributor = new FeeDistributor(address(collateral), address(vault), treasury, 500 ether, address(this));
+        engine = new InverseEngine(address(collateral), address(oracle), address(vault), address(feeDistributor), address(this));
+        session = new SessionManager(address(collateral), address(engine));
 
         vault.setEngine(address(engine));
         engine.setSessionManager(address(session));
@@ -69,13 +71,25 @@ contract Base is Test {
         vm.deal(trader, 10_000 ether);
         vm.deal(keeper, 10 ether);
         vm.deal(address(this), 10_000 ether);
+
+        // Collateral balances + blanket approvals so tests only change the call shape, not custody setup.
+        address[3] memory actors = [lp, trader, address(this)];
+        for (uint256 i = 0; i < actors.length; i++) {
+            collateral.mint(actors[i], 10_000 ether);
+            vm.startPrank(actors[i]);
+            collateral.approve(address(vault), type(uint256).max);
+            collateral.approve(address(engine), type(uint256).max);
+            collateral.approve(address(session), type(uint256).max);
+            collateral.approve(address(feeDistributor), type(uint256).max);
+            vm.stopPrank();
+        }
     }
 
     // ---- helpers ----
 
     function _fundVault(uint256 amount) internal {
         vm.prank(lp);
-        vault.deposit{value: amount}();
+        vault.deposit(amount);
     }
 
     /// @notice Warms the V2 oracle: snapshot now, warp 6 minutes, snapshot again (anchor is 6m old).

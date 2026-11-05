@@ -34,6 +34,18 @@ const schema = z.object({
   KEEPER_POLL_MS: z.coerce.number().default(3000),
   WARMER_INTERVAL_MS: z.coerce.number().default(60000),
   LOG_LEVEL: z.string().default("info"),
+
+  // ---- Pyth (cross-chain / feed-priced markets, e.g. SOL — settled in BNB) ----
+  // On-chain Pyth contract on BSC. Unset => Pyth posting is disabled (POOL-only deployment).
+  PYTH_ADDRESS: z.string().optional(),
+  // Hermes price-service base URL used to fetch signed update blobs.
+  HERMES_URL: z.string().url().default("https://hermes.pyth.network"),
+  // CSV of "synthTokenAddr:0xpythFeedId" pairs. synthTokenAddr is the market's on-chain id
+  // (the address registered via OracleRouter.setSource / PythAdapter.setFeed).
+  PYTH_MARKETS: z.string().default(""),
+  // How often the warmer posts fresh Pyth updates on-chain. Must be comfortably below the
+  // adapter's maxAge (default 60s) so feed prices never go stale between posts.
+  PYTH_POST_INTERVAL_MS: z.coerce.number().default(15000),
 });
 
 const parsed = schema.safeParse(process.env);
@@ -69,3 +81,21 @@ export function requireAddresses(): {
 export const warmTokens = config.WARM_TOKENS.split(",")
   .map((t) => t.trim())
   .filter((t) => t.length > 0);
+
+/// A cross-chain / feed-priced market: a synthetic on-chain token id mapped to its Pyth feed id.
+export type PythMarket = { token: string; feedId: string };
+
+/// Parsed PYTH_MARKETS registry. Token ids are lowercased for map lookups against indexed positions.
+export const pythMarkets: PythMarket[] = config.PYTH_MARKETS.split(",")
+  .map((s) => s.trim())
+  .filter((s) => s.length > 0)
+  .map((pair) => {
+    const idx = pair.indexOf(":");
+    const token = idx >= 0 ? pair.slice(0, idx).trim() : "";
+    const feedId = idx >= 0 ? pair.slice(idx + 1).trim() : "";
+    if (!token || !feedId) throw new Error(`Invalid PYTH_MARKETS entry (want "addr:0xfeedId"): ${pair}`);
+    return { token: token.toLowerCase(), feedId };
+  });
+
+/// Lookup from (lowercased) token id to its Pyth market.
+export const pythByToken = new Map<string, PythMarket>(pythMarkets.map((m) => [m.token, m]));

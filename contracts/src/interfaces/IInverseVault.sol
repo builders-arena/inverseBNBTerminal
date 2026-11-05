@@ -3,7 +3,7 @@ pragma solidity 0.8.24;
 
 interface IInverseVault {
     // ---- LP actions ----
-    function deposit() external payable returns (uint256 shares);
+    function deposit(uint256 amount) external returns (uint256 shares);
     function requestWithdraw(uint256 shares) external;
     function withdraw() external returns (uint256 amount);
 
@@ -11,8 +11,8 @@ interface IInverseVault {
     function reserve(uint256 amount) external;
     function release(uint256 amount) external;
     function payTrader(address to, uint256 amount) external;
-    function receiveLoss() external payable;
-    function receiveFee() external payable;
+    function receiveLoss(uint256 amount) external;
+    function receiveFee(uint256 amount) external;
     function absorbBadDebt(uint256 amount) external;
 
     // ---- Views ----

@@ -32,6 +32,9 @@ interface IPriceOracle {
     /// @notice WBNB-equivalent reserve backing `token`'s price (V2 reserve or V3 in-range depth), 1e18.
     function pairReserveWbnb(address token) external view returns (uint256);
 
+    /// @notice Minimum WBNB-equivalent depth required to route a price at all (the tradeability floor).
+    function LIQ_FLOOR() external view returns (uint256);
+
     /// @notice Full status used by the frontend trade panel and the backend warmer.
     function status(address token) external view returns (Status memory);
 

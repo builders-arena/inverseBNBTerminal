@@ -15,6 +15,7 @@ contract Handler is Test {
     PriceOracle public oracle;
     MockV2Pair public pair;
     MockERC20 public token;
+    MockERC20 public collateral;
 
     uint112 constant R_TOKEN = 1_000_000 ether;
 
@@ -35,14 +36,21 @@ contract Handler is Test {
         oracle = o;
         pair = p;
         token = t;
+        collateral = MockERC20(address(vault.asset()));
         vm.deal(lp, 1_000_000 ether);
         vm.deal(trader, 1_000_000 ether);
+        collateral.mint(lp, 1_000_000 ether);
+        collateral.mint(trader, 1_000_000 ether);
+        vm.prank(lp);
+        collateral.approve(address(vault), type(uint256).max);
+        vm.prank(trader);
+        collateral.approve(address(engine), type(uint256).max);
     }
 
     function deposit(uint256 amt) public {
         amt = bound(amt, 1 ether, 1000 ether);
         vm.prank(lp);
-        try vault.deposit{value: amt}() {} catch {}
+        try vault.deposit(amt) {} catch {}
     }
 
     function withdrawFlow(uint256 shares) public {
@@ -61,7 +69,7 @@ contract Handler is Test {
     function open(uint256 amt, bool isLong) public {
         amt = bound(amt, 0.01 ether, 0.5 ether);
         vm.prank(trader);
-        try engine.openPosition{value: amt}(address(token), isLong, 2, 0, 0) returns (uint256 id) {
+        try engine.openPosition(amt, address(token), isLong, 2, 0, 0) returns (uint256 id) {
             openIds.push(id);
         } catch {}
     }

@@ -39,10 +39,10 @@ contract OracleV2Test is Base {
     }
 
     function test_lowLiquidity_reverts() public {
-        // Drop WBNB reserve below the 50 BNB floor.
-        pair.setReserves(R_TOKEN, 40 ether);
+        // Drop WBNB reserve below the LIQ_FLOOR tradeability floor.
+        pair.setReserves(R_TOKEN, 5 ether);
         _warmV2();
-        vm.expectRevert(abi.encodeWithSelector(Errors.LowLiquidity.selector, address(token), uint256(40 ether)));
+        vm.expectRevert(abi.encodeWithSelector(Errors.LowLiquidity.selector, address(token), uint256(5 ether)));
         oracle.getPrice(address(token));
     }
 

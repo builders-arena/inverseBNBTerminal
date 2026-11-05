@@ -8,6 +8,7 @@ import {FeeDistributor} from "../src/core/FeeDistributor.sol";
 import {InverseEngine} from "../src/core/InverseEngine.sol";
 import {IPriceOracle} from "../src/interfaces/IPriceOracle.sol";
 import {IInverseEngine} from "../src/interfaces/IInverseEngine.sol";
+import {MockERC20} from "./mocks/MockERC20.sol";
 
 /// @notice Fork-of-mainnet scenario test: runs the lazy-TWAP oracle and a full open/close against the
 ///         real PancakeSwap V2 CAKE/WBNB pair. Opt-in: only runs when BSC_RPC_URL is set, otherwise
@@ -24,6 +25,7 @@ contract ForkIntegrationTest is Test {
     InverseVault internal vault;
     FeeDistributor internal feeDistributor;
     InverseEngine internal engine;
+    MockERC20 internal collateral;
 
     address internal trader = makeAddr("trader");
     address internal lp = makeAddr("lp");
@@ -38,10 +40,11 @@ contract ForkIntegrationTest is Test {
             return;
         }
 
-        oracle = new PriceOracle(WBNB, V2_FACTORY, V3_FACTORY, address(this));
-        vault = new InverseVault(address(this));
-        feeDistributor = new FeeDistributor(address(vault), makeAddr("treasury"), address(this));
-        engine = new InverseEngine(address(oracle), address(vault), address(feeDistributor), address(this));
+        collateral = new MockERC20("USD Coin", "USDC", 18);
+        oracle = new PriceOracle(WBNB, V2_FACTORY, V3_FACTORY, 10 ether, address(this));
+        vault = new InverseVault(address(collateral), address(this));
+        feeDistributor = new FeeDistributor(address(collateral), address(vault), makeAddr("treasury"), 500 ether, address(this));
+        engine = new InverseEngine(address(collateral), address(oracle), address(vault), address(feeDistributor), address(this));
 
         vault.setEngine(address(engine));
         vault.setPoolCap(100_000 ether);
@@ -54,6 +57,12 @@ contract ForkIntegrationTest is Test {
 
         vm.deal(lp, 10_000 ether);
         vm.deal(trader, 10_000 ether);
+        collateral.mint(lp, 10_000 ether);
+        collateral.mint(trader, 10_000 ether);
+        vm.prank(lp);
+        collateral.approve(address(vault), type(uint256).max);
+        vm.prank(trader);
+        collateral.approve(address(engine), type(uint256).max);
     }
 
     function test_fork_oracleRoutesAndPrices() public {
@@ -82,7 +91,7 @@ contract ForkIntegrationTest is Test {
             return;
         }
         vm.prank(lp);
-        vault.deposit{value: 100 ether}();
+        vault.deposit(100 ether);
         _warm(CAKE);
 
         IInverseEngine.Preview memory pv = engine.previewOpen(CAKE, true, 2, 1 ether);
@@ -90,18 +99,18 @@ contract ForkIntegrationTest is Test {
         assertEq(pv.maxPayout, 0.99 ether);
 
         vm.prank(trader);
-        uint256 id = engine.openPosition{value: 1 ether}(CAKE, true, 2, 0, 0);
+        uint256 id = engine.openPosition(1 ether, CAKE, true, 2, 0, 0);
         assertEq(engine.getPosition(id).collateral, 0.99 ether);
 
         // Price is static on the fork; close ~breakeven after the min hold.
         vm.warp(block.timestamp + 61);
-        uint256 before = trader.balance;
+        uint256 before = collateral.balanceOf(trader);
         vm.prank(trader);
         engine.closePosition(id);
 
         assertFalse(engine.getPosition(id).isOpen);
         // Breakeven minus 1% close fee on ~collateral => ~0.9801 BNB back.
-        assertApproxEqRel(trader.balance - before, 0.9801 ether, 0.02e18); // within 2%
+        assertApproxEqRel(collateral.balanceOf(trader) - before, 0.9801 ether, 0.02e18); // within 2%
     }
 
     /// @dev Warm the V2 oracle: snapshot, advance past WINDOW_MIN, snapshot again.

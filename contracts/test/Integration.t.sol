@@ -17,7 +17,7 @@ contract IntegrationTest is Base {
 
         // Trader opens a long and the price falls 10% -> trader loses, LPs gain.
         vm.prank(trader);
-        uint256 id = engine.openPosition{value: 1 ether}(address(token), true, 2, 0, 0);
+        uint256 id = engine.openPosition(1 ether, address(token), true, 2, 0, 0);
         _repriceTo(90 ether);
         vm.prank(trader);
         engine.closePosition(id);
@@ -29,10 +29,10 @@ contract IntegrationTest is Base {
         vm.prank(lp);
         vault.requestWithdraw(10 ether);
         vm.warp(block.timestamp + 1 hours);
-        uint256 before = lp.balance;
+        uint256 before = collateral.balanceOf(lp);
         vm.prank(lp);
         vault.withdraw();
         // 10 shares * priceAfter(>1e18) > 10 ether principal value.
-        assertGt(lp.balance - before, 10 ether);
+        assertGt(collateral.balanceOf(lp) - before, 10 ether);
     }
 }

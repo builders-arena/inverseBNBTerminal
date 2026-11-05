@@ -15,7 +15,7 @@ contract EngineTest is Base {
 
     function _openLong(uint256 value, uint8 lev) internal returns (uint256 id) {
         vm.prank(trader);
-        id = engine.openPosition{value: value}(address(token), true, lev, 0, 0);
+        id = engine.openPosition(value, address(token), true, lev, 0, 0);
     }
 
     function test_open_storesPositionAndReserves() public {
@@ -28,58 +28,58 @@ contract EngineTest is Base {
         assertEq(uint256(p.leverage), 2);
         assertEq(engine.getTokenOi(address(token)), 1.98 ether);
         assertEq(vault.reserved(), 0.99 ether);
-        assertEq(address(engine).balance, 0.99 ether); // collateral held here
+        assertEq(collateral.balanceOf(address(engine)), 0.99 ether); // collateral held here
     }
 
     function test_open_notionalCap() public {
         // 1.5 BNB @2x => notional 2.97 > 2 (2% of 100 BNB reserve)
         vm.prank(trader);
         vm.expectRevert();
-        engine.openPosition{value: 1.5 ether}(address(token), true, 2, 0, 0);
+        engine.openPosition(1.5 ether, address(token), true, 2, 0, 0);
     }
 
     function test_open_oiCap() public {
         engine.setMaxOiPerToken(1); // oiCap = nav * 1bps, tiny
         vm.prank(trader);
         vm.expectRevert();
-        engine.openPosition{value: 1 ether}(address(token), true, 2, 0, 0);
+        engine.openPosition(1 ether, address(token), true, 2, 0, 0);
     }
 
     function test_open_leverageGating() public {
         engine.setMaxLeverageEnabled(2);
         vm.prank(trader);
         vm.expectRevert(abi.encodeWithSelector(Errors.LeverageNotEnabled.selector, uint8(5), uint8(2)));
-        engine.openPosition{value: 1 ether}(address(token), true, 5, 0, 0);
+        engine.openPosition(1 ether, address(token), true, 5, 0, 0);
     }
 
     function test_open_badLeverage() public {
         vm.prank(trader);
         vm.expectRevert(abi.encodeWithSelector(Errors.BadLeverage.selector, uint8(3)));
-        engine.openPosition{value: 1 ether}(address(token), true, 3, 0, 0);
+        engine.openPosition(1 ether, address(token), true, 3, 0, 0);
     }
 
     function test_open_haltedReverts() public {
         oracle.setHalted(address(token), true);
         vm.prank(trader);
         vm.expectRevert(abi.encodeWithSelector(Errors.Halted.selector, address(token)));
-        engine.openPosition{value: 1 ether}(address(token), true, 2, 0, 0);
+        engine.openPosition(1 ether, address(token), true, 2, 0, 0);
     }
 
     function test_open_sizeBounds() public {
         vm.prank(trader);
         vm.expectRevert();
-        engine.openPosition{value: 0.001 ether}(address(token), true, 2, 0, 0);
+        engine.openPosition(0.001 ether, address(token), true, 2, 0, 0);
     }
 
     function test_close_win() public {
         uint256 id = _openLong(1 ether, 2);
-        uint256 before = trader.balance;
+        uint256 before = collateral.balanceOf(trader);
         _repriceTo(125 ether); // +25%
         vm.prank(trader);
         engine.closePosition(id);
 
         // profit 0.495, net 1.485, closeFee 0.01485, traderOut 1.47015 (balance captured post-open).
-        assertApproxEqAbs(trader.balance - before, 1.47015 ether, 1e9);
+        assertApproxEqAbs(collateral.balanceOf(trader) - before, 1.47015 ether, 1e9);
         assertFalse(engine.getPosition(id).isOpen);
         assertEq(engine.getTokenOi(address(token)), 0);
         assertEq(vault.reserved(), 0);
@@ -87,13 +87,13 @@ contract EngineTest is Base {
 
     function test_close_loss() public {
         uint256 id = _openLong(1 ether, 2);
-        uint256 before = trader.balance;
+        uint256 before = collateral.balanceOf(trader);
         _repriceTo(90 ether); // -10%
         vm.prank(trader);
         engine.closePosition(id);
 
         // loss 0.198, net 0.792, closeFee 0.00792, traderOut 0.78408 (balance captured post-open).
-        assertApproxEqAbs(trader.balance - before, 0.78408 ether, 1e9);
+        assertApproxEqAbs(collateral.balanceOf(trader) - before, 0.78408 ether, 1e9);
     }
 
     function test_minHold_enforced() public {
@@ -105,7 +105,7 @@ contract EngineTest is Base {
 
     function test_keeper_closeOnTp() public {
         vm.prank(trader);
-        uint256 id = engine.openPosition{value: 1 ether}(address(token), true, 2, 1.1e14, 0);
+        uint256 id = engine.openPosition(1 ether, address(token), true, 2, 1.1e14, 0);
         _repriceTo(125 ether); // price 1.25e14 >= tp 1.1e14
         vm.prank(keeper);
         engine.closePosition(id); // keeper allowed because TP hit

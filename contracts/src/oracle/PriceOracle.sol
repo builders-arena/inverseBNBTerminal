@@ -25,7 +25,10 @@ contract PriceOracle is IPriceOracle, Governed {
     IPancakeV3Factory public immutable v3Factory;
 
     // ---- Manipulation guards / windows ----
-    uint256 public constant LIQ_FLOOR = 50 ether; // min WBNB-equiv liquidity
+    // Tradeability floor: a price is only routed for pools at/above this quote-asset-equiv depth. This
+    // is also the 2x leverage floor — the engine tiers 5x/10x on deeper pools (see InverseEngine). Set
+    // per deployment in the quote asset's units (e.g. 10e18 for WBNB, 10_000e6 for USDC).
+    uint256 public immutable LIQ_FLOOR; // min quote-equiv liquidity
     uint256 public constant DEVIATION_BPS_MAX = 2500; // 25% spot-vs-TWAP circuit breaker
     uint256 public constant SNAPSHOT_MIN_GAP = 60; // min spacing between stored V2 snapshots
     uint256 public constant WINDOW_MIN = 5 minutes; // youngest acceptable anchor age
@@ -58,12 +61,14 @@ contract PriceOracle is IPriceOracle, Governed {
     event RouteOverrideSet(address indexed token, Route route);
     event V3FeesSet(uint24[] fees);
 
-    constructor(address wbnb_, address v2Factory_, address v3Factory_, address guardian_)
+    constructor(address wbnb_, address v2Factory_, address v3Factory_, uint256 liqFloor_, address guardian_)
         Governed(guardian_)
     {
         if (wbnb_ == address(0) || v2Factory_ == address(0) || v3Factory_ == address(0)) {
             revert Errors.ZeroAddress();
         }
+        if (liqFloor_ == 0) revert Errors.ZeroAmount();
+        LIQ_FLOOR = liqFloor_;
         WBNB = wbnb_;
         v2Factory = IPancakeV2Factory(v2Factory_);
         v3Factory = IPancakeV3Factory(v3Factory_);

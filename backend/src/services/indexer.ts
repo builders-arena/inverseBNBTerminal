@@ -1,5 +1,5 @@
 import { ethers } from "ethers";
-import { config, warmTokens } from "../lib/config.js";
+import { config, warmTokens, pythMarkets } from "../lib/config.js";
 import { logger } from "../lib/logger.js";
 import { prisma } from "../lib/db.js";
 import { makeProvider, contracts } from "../lib/chain.js";
@@ -281,14 +281,16 @@ async function samplePool(vault: ethers.Contract, block: bigint): Promise<void> 
   }
 }
 
-/// Samples the TWAP for configured tokens into OracleSnapshot so the chart has a denser price series
-/// than trade-only snapshots. Deduped per token to PRICE_SAMPLE_MS.
+/// Samples the price for configured tokens into OracleSnapshot so the chart has a denser price series
+/// than trade-only snapshots. Covers both pool (V2/V3 TWAP) and feed (Pyth) markets — for a feed
+/// market the router's status() returns the Pyth price in `twap`. Deduped per token to PRICE_SAMPLE_MS.
 async function samplePrices(
   oracle: ethers.Contract,
   block: bigint,
   last: Map<string, number>,
 ): Promise<void> {
-  for (const token of warmTokens) {
+  const tokens = [...new Set([...warmTokens, ...pythMarkets.map((m) => m.token)])];
+  for (const token of tokens) {
     if (Date.now() - (last.get(token) ?? 0) < PRICE_SAMPLE_MS) continue;
     try {
       const s = (await oracle.status(token)) as { twap: bigint };

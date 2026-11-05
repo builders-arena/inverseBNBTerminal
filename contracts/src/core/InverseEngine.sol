@@ -2,6 +2,8 @@
 pragma solidity 0.8.24;
 
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {IInverseEngine} from "../interfaces/IInverseEngine.sol";
 import {IInverseVault} from "../interfaces/IInverseVault.sol";
 import {IPriceOracle} from "../interfaces/IPriceOracle.sol";
@@ -14,6 +16,9 @@ import {Governed} from "../libraries/Governed.sol";
 ///         here; the vault reserves each position's capped max payout. PnL is a clamped function of the
 ///         oracle TWAP move; losses and borrow fees flow to the vault, open/close fees to the distributor.
 contract InverseEngine is IInverseEngine, Governed, ReentrancyGuard {
+    using SafeERC20 for IERC20;
+
+    IERC20 public immutable asset; // collateral token (settlement asset, e.g. USDC)
     IPriceOracle public immutable oracle;
     IInverseVault public immutable vault;
     IFeeDistributor public immutable feeDistributor;
@@ -45,7 +50,14 @@ contract InverseEngine is IInverseEngine, Governed, ReentrancyGuard {
     uint256 public borrowBasePerHourBps = 1; // 0.01%/hr at 100% utilization
     uint256 public maxOiPerTokenBps = 500;
     uint256 public payoutCapBps = 300; // Stage 0
-    uint8 public maxLeverageEnabled = 2; // Stage 0
+    uint8 public maxLeverageEnabled = 2; // Stage 0 global gate (ceiling over the per-coin depth tier)
+
+    // ---- Depth-tiered per-coin leverage ----
+    // Max leverage is gated by the pool's WBNB-equivalent depth, like useinverse.xyz tiers by SOL depth:
+    // deeper pools cost more to manipulate, so they unlock higher leverage. Below lev5FloorWbnb a coin is
+    // 2x-only; the oracle's LIQ_FLOOR is the hard floor below which the coin is not tradeable at all.
+    uint256 public lev5FloorWbnb = 15 ether; // >= this WBNB depth unlocks 5x
+    uint256 public lev10FloorWbnb = 50 ether; // >= this WBNB depth unlocks 10x
 
     uint256 public pauseOpensUntil;
 
@@ -75,15 +87,19 @@ contract InverseEngine is IInverseEngine, Governed, ReentrancyGuard {
         _;
     }
 
-    constructor(address oracle_, address vault_, address feeDistributor_, address guardian_)
+    constructor(address asset_, address oracle_, address vault_, address feeDistributor_, address guardian_)
         Governed(guardian_)
     {
-        if (oracle_ == address(0) || vault_ == address(0) || feeDistributor_ == address(0)) {
+        if (asset_ == address(0) || oracle_ == address(0) || vault_ == address(0) || feeDistributor_ == address(0)) {
             revert Errors.ZeroAddress();
         }
+        asset = IERC20(asset_);
         oracle = IPriceOracle(oracle_);
         vault = IInverseVault(vault_);
         feeDistributor = IFeeDistributor(feeDistributor_);
+        // Pre-approve the vault (loss/borrow-fee inflow) and fee distributor (open/close fees) to pull.
+        asset.forceApprove(vault_, type(uint256).max);
+        asset.forceApprove(feeDistributor_, type(uint256).max);
     }
 
     // =========================================================================
@@ -91,30 +107,31 @@ contract InverseEngine is IInverseEngine, Governed, ReentrancyGuard {
     // =========================================================================
 
     /// @inheritdoc IInverseEngine
-    function openPosition(address token, bool isLong, uint8 leverage, uint256 tpPrice, uint256 slPrice)
+    function openPosition(uint256 amount, address token, bool isLong, uint8 leverage, uint256 tpPrice, uint256 slPrice)
         external
-        payable
         nonReentrant
         returns (uint256 id)
     {
-        return _open(msg.sender, msg.value, token, isLong, leverage, tpPrice, slPrice);
+        return _open(msg.sender, msg.sender, amount, token, isLong, leverage, tpPrice, slPrice);
     }
 
     /// @inheritdoc IInverseEngine
     function openPositionFor(
+        uint256 amount,
         address trader,
         address token,
         bool isLong,
         uint8 leverage,
         uint256 tpPrice,
         uint256 slPrice
-    ) external payable nonReentrant returns (uint256 id) {
+    ) external nonReentrant returns (uint256 id) {
         if (msg.sender != sessionManager) revert Errors.NotSessionManager(msg.sender);
-        return _open(trader, msg.value, token, isLong, leverage, tpPrice, slPrice);
+        return _open(trader, msg.sender, amount, token, isLong, leverage, tpPrice, slPrice);
     }
 
     function _open(
         address trader,
+        address funder,
         uint256 value,
         address token,
         bool isLong,
@@ -128,6 +145,9 @@ contract InverseEngine is IInverseEngine, Governed, ReentrancyGuard {
         if (value < minPosition) revert Errors.PositionTooSmall(value, minPosition);
         if (value > maxPosition) revert Errors.PositionTooLarge(value, maxPosition);
 
+        // Pull the trader's collateral (from the trader directly, or from the SessionManager's custody).
+        asset.safeTransferFrom(funder, address(this), value);
+
         oracle.snapshot(token);
         uint256 entryPrice = oracle.getPrice(token);
 
@@ -136,6 +156,11 @@ contract InverseEngine is IInverseEngine, Governed, ReentrancyGuard {
         uint256 notional = collateral * leverage;
 
         uint256 reserveWbnb = oracle.pairReserveWbnb(token);
+
+        // Per-coin depth tier: this pool's WBNB depth caps how much leverage it may take.
+        uint8 depthCap = _leverageForDepth(reserveWbnb);
+        if (leverage > depthCap) revert Errors.LeverageNotEnabled(leverage, depthCap);
+
         uint256 notionalCap = (reserveWbnb * NOTIONAL_CAP_BPS) / 10_000;
         if (notional > notionalCap) revert Errors.NotionalCapExceeded(notional, notionalCap);
 
@@ -166,7 +191,7 @@ contract InverseEngine is IInverseEngine, Governed, ReentrancyGuard {
             slPrice: slPrice
         });
 
-        if (openFee > 0) feeDistributor.distribute{value: openFee}();
+        if (openFee > 0) feeDistributor.distribute(openFee);
 
         emit PositionOpened(id, trader, token, isLong, leverage, collateral, entryPrice, maxPayout);
     }
@@ -249,9 +274,9 @@ contract InverseEngine is IInverseEngine, Governed, ReentrancyGuard {
             closeFee = (net * closeFeeBps) / 10_000;
             traderOut = net - closeFee;
             vault.release(maxPayout);
-            if (borrowFee > 0) vault.receiveLoss{value: borrowFee}();
-            if (closeFee > 0) feeDistributor.distribute{value: closeFee}();
-            if (traderOut > 0) _sendBnb(trader, traderOut);
+            if (borrowFee > 0) vault.receiveLoss(borrowFee);
+            if (closeFee > 0) feeDistributor.distribute(closeFee);
+            if (traderOut > 0) asset.safeTransfer(trader, traderOut);
         } else {
             uint256 loss = uint256(-pnl);
             uint256 toVault = loss + borrowFee;
@@ -264,10 +289,10 @@ contract InverseEngine is IInverseEngine, Governed, ReentrancyGuard {
             closeFee = (net * closeFeeBps) / 10_000;
             traderOut = net - closeFee;
             vault.release(maxPayout);
-            if (toVault > 0) vault.receiveLoss{value: toVault}();
+            if (toVault > 0) vault.receiveLoss(toVault);
             if (badDebt > 0) vault.absorbBadDebt(badDebt);
-            if (closeFee > 0) feeDistributor.distribute{value: closeFee}();
-            if (traderOut > 0) _sendBnb(trader, traderOut);
+            if (closeFee > 0) feeDistributor.distribute(closeFee);
+            if (traderOut > 0) asset.safeTransfer(trader, traderOut);
         }
 
         emit PositionClosed(id, pnl, borrowFee, closeFee, traderOut);
@@ -321,9 +346,9 @@ contract InverseEngine is IInverseEngine, Governed, ReentrancyGuard {
         uint256 badDebt = lossPlusFee > collateral ? lossPlusFee - collateral : 0;
 
         vault.release(p.maxPayout);
-        if (toVault > 0) vault.receiveLoss{value: toVault}();
+        if (toVault > 0) vault.receiveLoss(toVault);
         if (badDebt > 0) vault.absorbBadDebt(badDebt);
-        if (keeperReward > 0) _sendBnb(rewardTo, keeperReward);
+        if (keeperReward > 0) asset.safeTransfer(rewardTo, keeperReward);
 
         emit PositionLiquidated(id, rewardTo, keeperReward, toVault, badDebt);
     }
@@ -404,6 +429,27 @@ contract InverseEngine is IInverseEngine, Governed, ReentrancyGuard {
     /// @inheritdoc IInverseEngine
     function getTokenOi(address token) external view returns (uint256) {
         return tokenOi[token];
+    }
+
+    /// @dev Depth tier for a given WBNB-equiv reserve. Callers must ensure the pool is tradeable
+    ///      (reserve >= oracle.LIQ_FLOOR()); at the open path getPrice() already guarantees that.
+    function _leverageForDepth(uint256 reserveWbnb) internal view returns (uint8) {
+        if (reserveWbnb >= lev10FloorWbnb) return 10;
+        if (reserveWbnb >= lev5FloorWbnb) return 5;
+        return 2;
+    }
+
+    /// @inheritdoc IInverseEngine
+    function maxLeverageFor(address token) external view returns (uint8) {
+        // Returns the leverage a coin's pool currently allows: the depth tier capped by the global
+        // Stage gate. 0 means not tradeable (no route, or depth below the oracle floor).
+        try oracle.pairReserveWbnb(token) returns (uint256 reserveWbnb) {
+            if (reserveWbnb < oracle.LIQ_FLOOR()) return 0;
+            uint8 cap = _leverageForDepth(reserveWbnb);
+            return cap < maxLeverageEnabled ? cap : maxLeverageEnabled;
+        } catch {
+            return 0;
+        }
     }
 
     /// @inheritdoc IInverseEngine
@@ -535,16 +581,15 @@ contract InverseEngine is IInverseEngine, Governed, ReentrancyGuard {
         emit ParamsChanged();
     }
 
-    // =========================================================================
-    //                                 INTERNAL
-    // =========================================================================
-
-    function _sendBnb(address to, uint256 amount) internal {
-        (bool ok,) = to.call{value: amount}("");
-        if (!ok) revert Errors.EthTransferFailed();
+    /// @notice Sets the WBNB-depth thresholds that unlock 5x and 10x per coin.
+    /// @dev    Monotonic (lev5 <= lev10) and non-zero. The 2x band is everything tradeable below lev5.
+    function setLeverageTiers(uint256 lev5Floor_, uint256 lev10Floor_) external onlyGuardian {
+        if (lev5Floor_ == 0 || lev10Floor_ < lev5Floor_) {
+            revert Errors.OutOfBounds(lev10Floor_, lev5Floor_, type(uint256).max);
+        }
+        lev5FloorWbnb = lev5Floor_;
+        lev10FloorWbnb = lev10Floor_;
+        emit ParamsChanged();
     }
 
-    /// @dev Accepts BNB from the vault when settling winning positions (profit is pulled in, then
-    ///      disbursed to the trader in the same call). Not used for any other purpose.
-    receive() external payable {}
 }

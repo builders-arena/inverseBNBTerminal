@@ -8,31 +8,31 @@ contract FeeDistributorTest is Base {
         _fundVault(10 ether); // cumulativeDeposits 10 <= 500, within 90d window
         assertEq(feeDistributor.vaultBps(), 9000);
 
-        uint256 vaultBefore = address(vault).balance;
-        uint256 treasBefore = treasury.balance;
-        feeDistributor.distribute{value: 1 ether}();
-        assertEq(address(vault).balance - vaultBefore, 0.9 ether);
-        assertEq(treasury.balance - treasBefore, 0.1 ether);
+        uint256 vaultBefore = collateral.balanceOf(address(vault));
+        uint256 treasBefore = collateral.balanceOf(treasury);
+        feeDistributor.distribute(1 ether);
+        assertEq(collateral.balanceOf(address(vault)) - vaultBefore, 0.9 ether);
+        assertEq(collateral.balanceOf(treasury) - treasBefore, 0.1 ether);
     }
 
     function test_split_revertsToDefault_afterCap() public {
         _fundVault(501 ether); // cumulativeDeposits > 500 -> boost ends
         assertEq(feeDistributor.vaultBps(), 8000);
 
-        uint256 vaultBefore = address(vault).balance;
-        uint256 treasBefore = treasury.balance;
-        feeDistributor.distribute{value: 1 ether}();
-        assertEq(address(vault).balance - vaultBefore, 0.8 ether);
-        assertEq(treasury.balance - treasBefore, 0.2 ether);
+        uint256 vaultBefore = collateral.balanceOf(address(vault));
+        uint256 treasBefore = collateral.balanceOf(treasury);
+        feeDistributor.distribute(1 ether);
+        assertEq(collateral.balanceOf(address(vault)) - vaultBefore, 0.8 ether);
+        assertEq(collateral.balanceOf(treasury) - treasBefore, 0.2 ether);
     }
 
     function test_split_revertsToDefault_afterWindow() public {
         _fundVault(10 ether);
         vm.warp(block.timestamp + 91 days); // past bootstrapEnd
         assertEq(feeDistributor.vaultBps(), 8000);
-        uint256 treasBefore = treasury.balance;
-        feeDistributor.distribute{value: 1 ether}();
-        assertEq(treasury.balance - treasBefore, 0.2 ether);
+        uint256 treasBefore = collateral.balanceOf(treasury);
+        feeDistributor.distribute(1 ether);
+        assertEq(collateral.balanceOf(treasury) - treasBefore, 0.2 ether);
     }
 
     function test_setTreasury_onlyGuardian() public {

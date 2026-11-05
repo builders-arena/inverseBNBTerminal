@@ -1,11 +1,42 @@
 import { ethers } from "ethers";
-import { config } from "../lib/config.js";
+import { config, pythByToken } from "../lib/config.js";
 import { logger } from "../lib/logger.js";
 import { prisma } from "../lib/db.js";
 import { makeProvider, contracts, walletFrom } from "../lib/chain.js";
 import { alert } from "../lib/alerts.js";
+import { pythEnabled, postPythUpdates } from "../lib/pyth.js";
 
 const MIN_KEEPER_BALANCE = ethers.parseEther("0.05");
+// Don't re-post Pyth updates more often than this; the warmer already keeps feeds broadly fresh,
+// this only guarantees a fresh price exists before the keeper reads/liquidates a feed position.
+const PYTH_KEEPER_MIN_GAP_MS = 10_000;
+let lastPythPost = 0;
+
+/// Ensure a fresh Pyth price exists for any open feed-priced positions before the keeper reads them,
+/// otherwise getPrice reverts Stale and those positions can never be evaluated or liquidated.
+async function ensureFeedFreshness(
+  open: { token: string }[],
+  wallet: ethers.Wallet,
+): Promise<void> {
+  if (!pythEnabled()) return;
+  const feedIds = [
+    ...new Set(
+      open
+        .map((p) => pythByToken.get(p.token.toLowerCase())?.feedId)
+        .filter((id): id is string => Boolean(id)),
+    ),
+  ];
+  if (feedIds.length === 0 || Date.now() - lastPythPost < PYTH_KEEPER_MIN_GAP_MS) return;
+  try {
+    const hash = await postPythUpdates(wallet, feedIds);
+    if (hash) {
+      lastPythPost = Date.now();
+      logger.debug({ feeds: feedIds.length, tx: hash }, "keeper pyth update");
+    }
+  } catch (err) {
+    logger.debug({ err: (err as Error).message }, "keeper pyth post skip");
+  }
+}
 
 async function tick(engine: ethers.Contract, wallet: ethers.Wallet): Promise<void> {
   const bal = await wallet.provider!.getBalance(wallet.address);
@@ -14,6 +45,9 @@ async function tick(engine: ethers.Contract, wallet: ethers.Wallet): Promise<voi
   }
 
   const open = await prisma.position.findMany({ where: { isOpen: true } });
+
+  // 0) Keep feed-priced (Pyth) markets fresh so their positions are evaluable this tick.
+  await ensureFeedFreshness(open, wallet);
 
   // 1) Collect liquidatable ids and clear them in a single batch tx (non-liquidatable are skipped on-chain).
   const liquidatable: bigint[] = [];

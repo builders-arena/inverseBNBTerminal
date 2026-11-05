@@ -4,6 +4,8 @@ pragma solidity 0.8.24;
 import {EIP712} from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
 import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {ISessionManager} from "../interfaces/ISessionManager.sol";
 import {IInverseEngine} from "../interfaces/IInverseEngine.sol";
 import {Errors} from "../libraries/Errors.sol";
@@ -11,9 +13,13 @@ import {Errors} from "../libraries/Errors.sol";
 /// @title  SessionManager
 /// @notice One-click trading: a trader funds a time-boxed session, then signs EIP-712 trade/close
 ///         intents off-chain. Anyone (a relayer) may submit a signed intent; relayers are only gas
-///         payers and cannot alter terms. Holds user BNB, so it is treated with the same custody rigor
-///         as the Vault: no admin withdrawal path, explicit per-session accounting, ReentrancyGuard.
+///         payers and cannot alter terms. Holds user collateral, so it is treated with the same custody
+///         rigor as the Vault: no admin withdrawal path, explicit per-session accounting, ReentrancyGuard.
 contract SessionManager is ISessionManager, EIP712, ReentrancyGuard {
+    using SafeERC20 for IERC20;
+
+    IERC20 public immutable asset; // collateral token (settlement asset, e.g. USDC)
+
     bytes32 public constant TRADE_INTENT_TYPEHASH = keccak256(
         "TradeIntent(uint256 sessionId,address token,bool isLong,uint8 leverage,uint256 amount,uint256 tpPrice,uint256 slPrice,uint256 nonce,uint256 deadline)"
     );
@@ -33,9 +39,12 @@ contract SessionManager is ISessionManager, EIP712, ReentrancyGuard {
     event SessionRevoked(uint256 indexed id);
     event UnspentWithdrawn(uint256 indexed id, uint256 amount);
 
-    constructor(address engine_) EIP712("InverseSessionManager", "1") {
-        if (engine_ == address(0)) revert Errors.ZeroAddress();
+    constructor(address asset_, address engine_) EIP712("InverseSessionManager", "1") {
+        if (asset_ == address(0) || engine_ == address(0)) revert Errors.ZeroAddress();
+        asset = IERC20(asset_);
         engine = IInverseEngine(engine_);
+        // Pre-approve the engine to pull per-trade collateral when executing intents.
+        asset.forceApprove(engine_, type(uint256).max);
     }
 
     // =========================================================================
@@ -43,26 +52,27 @@ contract SessionManager is ISessionManager, EIP712, ReentrancyGuard {
     // =========================================================================
 
     /// @inheritdoc ISessionManager
-    function createSession(uint256 maxPerTrade, uint256 duration)
+    function createSession(uint256 budget, uint256 maxPerTrade, uint256 duration)
         external
-        payable
         returns (uint256 id)
     {
-        if (msg.value == 0 || maxPerTrade == 0) revert Errors.ZeroAmount();
-        if (maxPerTrade > msg.value) revert Errors.PerTradeExceeded(maxPerTrade, msg.value);
+        if (budget == 0 || maxPerTrade == 0) revert Errors.ZeroAmount();
+        if (maxPerTrade > budget) revert Errors.PerTradeExceeded(maxPerTrade, budget);
         if (duration == 0 || duration > MAX_DURATION) revert Errors.OutOfBounds(duration, 1, MAX_DURATION);
+
+        asset.safeTransferFrom(msg.sender, address(this), budget);
 
         id = nextSessionId++;
         _sessions[id] = Session({
             trader: msg.sender,
-            budget: msg.value,
+            budget: budget,
             spent: 0,
             maxPerTrade: maxPerTrade,
             expiry: block.timestamp + duration,
             nonce: 0,
             active: true
         });
-        emit SessionCreated(id, msg.sender, msg.value, maxPerTrade, block.timestamp + duration);
+        emit SessionCreated(id, msg.sender, budget, maxPerTrade, block.timestamp + duration);
     }
 
     /// @inheritdoc ISessionManager
@@ -82,8 +92,7 @@ contract SessionManager is ISessionManager, EIP712, ReentrancyGuard {
         s.spent = s.budget; // mark fully withdrawn
         s.active = false;
         emit UnspentWithdrawn(id, remaining);
-        (bool ok,) = msg.sender.call{value: remaining}("");
-        if (!ok) revert Errors.EthTransferFailed();
+        asset.safeTransfer(msg.sender, remaining);
     }
 
     // =========================================================================
@@ -124,8 +133,8 @@ contract SessionManager is ISessionManager, EIP712, ReentrancyGuard {
         s.nonce += 1;
         s.spent += intent.amount;
 
-        positionId = engine.openPositionFor{value: intent.amount}(
-            s.trader, intent.token, intent.isLong, intent.leverage, intent.tpPrice, intent.slPrice
+        positionId = engine.openPositionFor(
+            intent.amount, s.trader, intent.token, intent.isLong, intent.leverage, intent.tpPrice, intent.slPrice
         );
         emit IntentExecuted(intent.sessionId, positionId, intent.amount, intent.nonce);
     }

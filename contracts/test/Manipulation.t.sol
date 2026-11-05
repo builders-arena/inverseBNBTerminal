@@ -22,7 +22,7 @@ contract ManipulationTest is Base {
         // Opening reverts: spot vs TWAP deviation (50%) exceeds the 25% breaker.
         vm.prank(trader);
         vm.expectRevert();
-        engine.openPosition{value: 1 ether}(address(token), true, 2, 0, 0);
+        engine.openPosition(1 ether, address(token), true, 2, 0, 0);
     }
 
     function test_maxPayout_boundedByPoolLiquidity() public view {
@@ -38,6 +38,6 @@ contract ManipulationTest is Base {
         // 2 BNB @2x would be 3.96 notional > 2% of 100 BNB reserve.
         vm.prank(trader);
         vm.expectRevert();
-        engine.openPosition{value: 2 ether}(address(token), true, 2, 0, 0);
+        engine.openPosition(2 ether, address(token), true, 2, 0, 0);
     }
 }
