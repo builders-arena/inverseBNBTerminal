@@ -46,7 +46,7 @@ contract Decimals6Test is Test {
         pool = new PriceOracle(address(quote), address(v2f), address(v3f), 10_000 * USD, address(this)); // $10k floor
         mockPyth = new MockPyth();
         adapter = new PythAdapter(address(mockPyth), address(this));
-        router = new OracleRouter(address(pool), address(adapter), address(this));
+        router = new OracleRouter(address(pool), address(adapter), address(0), address(this));
 
         vault = new InverseVault(address(usdc), address(this));
         fee = new FeeDistributor(address(usdc), address(vault), treasury, 350_000 * USD, address(this)); // $350k boost cap

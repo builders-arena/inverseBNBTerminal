@@ -10,6 +10,7 @@ import {InverseEngine} from "../src/core/InverseEngine.sol";
 import {SessionManager} from "../src/periphery/SessionManager.sol";
 import {KeeperFunder} from "../src/periphery/KeeperFunder.sol";
 import {PythAdapter} from "../src/oracle/PythAdapter.sol";
+import {ChainlinkAdapter} from "../src/oracle/ChainlinkAdapter.sol";
 import {OracleRouter} from "../src/oracle/OracleRouter.sol";
 
 /// @notice Deploys the full protocol, wires cross-references, and applies Stage 0 parameters.
@@ -25,8 +26,12 @@ import {OracleRouter} from "../src/oracle/OracleRouter.sol";
 ///   SEED_BNB                      — optional protocol LP seed deposited at deploy (collateral units)
 ///   BOOTSTRAP_CAP                 — LP-boost cumulative-deposit ceiling in collateral units (default 500e18)
 ///   LIQ_FLOOR                     — oracle tradeability/2x floor in quote-asset units (default 10e18)
-///   PYTH                          — optional Pyth contract; if set, deploys the OracleRouter + PythAdapter
-///                                   and points the engine at the router (else engine uses the pool oracle)
+///   PYTH                          — optional Pyth contract; if set, deploys a PythAdapter behind the
+///                                   OracleRouter (pull feeds, e.g. SOL via Pyth)
+///   CHAINLINK                     — optional bool; if true, deploys a ChainlinkAdapter behind the router
+///                                   (push feeds, e.g. SOL via Chainlink Data Feeds — no key/poster)
+///   Setting either PYTH or CHAINLINK deploys the OracleRouter and points the engine at it; otherwise
+///   the engine uses the pool oracle directly.
 contract Deploy is Script {
     address constant BSC_WBNB = 0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c;
     address constant BSC_V2_FACTORY = 0xcA143Ce32Fe78f1f7019d7d551a6402fC5350c73;
@@ -40,7 +45,8 @@ contract Deploy is Script {
     SessionManager public session;
     KeeperFunder public keeperFunder;
     PythAdapter public pythAdapter; // only when PYTH is set
-    OracleRouter public router; // only when PYTH is set
+    ChainlinkAdapter public chainlinkAdapter; // only when CHAINLINK is set
+    OracleRouter public router; // when PYTH or CHAINLINK is set
 
     function run() external {
         uint256 pk = vm.envOr("PRIVATE_KEY", uint256(0));
@@ -63,13 +69,16 @@ contract Deploy is Script {
         uint256 bootstrapCap = vm.envOr("BOOTSTRAP_CAP", uint256(500 ether));
         feeDistributor = new FeeDistributor(asset, address(vault), treasury, bootstrapCap, deployer);
 
-        // Optional routed oracle: if a Pyth contract is provided, the engine prices through the router
-        // (POOL by default per token, PYTH for feed-priced cross-chain assets). Else it uses the pool directly.
+        // Optional routed oracle: if a feed source (Pyth and/or Chainlink) is configured, the engine
+        // prices through the router (POOL by default per token, PYTH/CHAINLINK for feed-priced
+        // cross-chain assets). Else it uses the pool oracle directly.
         address pyth = vm.envOr("PYTH", address(0));
+        bool useChainlink = vm.envOr("CHAINLINK", false);
         address oracleForEngine = address(oracle);
-        if (pyth != address(0)) {
-            pythAdapter = new PythAdapter(pyth, deployer);
-            router = new OracleRouter(address(oracle), address(pythAdapter), deployer);
+        if (pyth != address(0) || useChainlink) {
+            if (pyth != address(0)) pythAdapter = new PythAdapter(pyth, deployer);
+            if (useChainlink) chainlinkAdapter = new ChainlinkAdapter(deployer);
+            router = new OracleRouter(address(oracle), address(pythAdapter), address(chainlinkAdapter), deployer);
             oracleForEngine = address(router);
         }
 
@@ -108,7 +117,8 @@ contract Deploy is Script {
             keeperFunder.transferGuardian(guardianSafe);
             if (address(router) != address(0)) {
                 router.transferGuardian(guardianSafe);
-                pythAdapter.transferGuardian(guardianSafe);
+                if (address(pythAdapter) != address(0)) pythAdapter.transferGuardian(guardianSafe);
+                if (address(chainlinkAdapter) != address(0)) chainlinkAdapter.transferGuardian(guardianSafe);
             }
         }
     }
@@ -121,6 +131,7 @@ contract Deploy is Script {
         console2.log("SessionManager ", address(session));
         console2.log("KeeperFunder   ", address(keeperFunder));
         console2.log("PythAdapter    ", address(pythAdapter));
+        console2.log("ChainlinkAdapter", address(chainlinkAdapter));
         console2.log("OracleRouter   ", address(router));
     }
 }

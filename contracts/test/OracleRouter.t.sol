@@ -32,7 +32,7 @@ contract OracleRouterTest is Base {
 
         mockPyth = new MockPyth();
         adapter = new PythAdapter(address(mockPyth), address(this));
-        router = new OracleRouter(address(oracle), address(adapter), address(this));
+        router = new OracleRouter(address(oracle), address(adapter), address(0), address(this));
 
         rVault = new InverseVault(address(collateral), address(this));
         rFee = new FeeDistributor(address(collateral), address(rVault), treasury, 500 ether, address(this));
