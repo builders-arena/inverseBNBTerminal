@@ -48,7 +48,7 @@ contract MigrationV4ForkTest is Test {
         forked = true;
 
         // --- stand up the new stack (mirrors DeployV4), this test contract as interim guardian ---
-        v4 = new V4Source(WETH, STATE_VIEW, 0.1 ether, address(this));
+        v4 = new V4Source(WETH, STATE_VIEW, 0.1 ether, 20 minutes, address(this));
         router = new OracleRouterV4(PRICE_ORACLE, address(v4), address(0), CHAINLINK_ADAPTER, address(this));
         vault = new InverseVault(WETH, address(this));
         feeDistributor = new FeeDistributor(WETH, address(vault), address(this), 500 ether, address(this));

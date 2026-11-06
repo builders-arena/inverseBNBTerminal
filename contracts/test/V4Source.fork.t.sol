@@ -44,7 +44,7 @@ contract V4SourceForkTest is Test {
         vm.createSelectFork(rpc);
         forked = true;
         // 0.001 ETH band-depth floor (well under the ~0.23 ETH band depth observed in the spike).
-        v4 = new V4Source(WETH, STATE_VIEW, 1e15, address(this));
+        v4 = new V4Source(WETH, STATE_VIEW, 1e15, 20 minutes, address(this));
     }
 
     /// poolId math holds regardless of fork (pure).

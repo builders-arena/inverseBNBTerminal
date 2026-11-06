@@ -67,6 +67,10 @@ contract DeployV4 is Script {
         address guardianSafe = vm.envOr("GUARDIAN_SAFE", deployer);
 
         uint256 liqFloor = vm.envOr("LIQ_FLOOR", uint256(0.1 ether));
+        // V4 ring staleness guard. Default 20 min: the warmer runs on GitHub-Actions */5 cron (jittery,
+        // no always-on host), so a 5-min guard would flap Stale. Must be in [5 min, 30 min]. See the
+        // v4-warmer workflow + docs/V4-SPIKE-RESULTS.md.
+        uint256 maxSnapshotAge = vm.envOr("MAX_SNAPSHOT_AGE", uint256(20 minutes));
         uint256 minPos = vm.envOr("MIN_POSITION", uint256(1e13));
         uint256 maxPos = vm.envOr("MAX_POSITION", uint256(0.5 ether));
         uint8 maxLev = uint8(vm.envOr("MAX_LEVERAGE", uint256(10)));
@@ -82,7 +86,7 @@ contract DeployV4 is Script {
         if (pk != 0) vm.startBroadcast(pk);
         else vm.startBroadcast();
 
-        deployStack(asset, priceOracle, chainlinkAdapter, stateView, treasury, liqFloor, bootstrapCap, deployer);
+        deployStack(asset, priceOracle, chainlinkAdapter, stateView, treasury, liqFloor, maxSnapshotAge, bootstrapCap, deployer);
         wireAndParams(minPos, maxPos, maxLev, payoutCapBps, poolCap, lev5Floor, lev10Floor);
         registerMarkets();
         if (guardianSafe != deployer) handOff(guardianSafe);
@@ -98,11 +102,12 @@ contract DeployV4 is Script {
         address stateView,
         address treasury,
         uint256 liqFloor,
+        uint256 maxSnapshotAge,
         uint256 bootstrapCap,
         address deployer
     ) internal {
         // V4 price source (its LIQ_FLOOR must match the pool oracle's so POOL and V4 share one floor).
-        v4 = new V4Source(asset, stateView, liqFloor, deployer);
+        v4 = new V4Source(asset, stateView, liqFloor, maxSnapshotAge, deployer);
         // New router: reuse the audited PriceOracle (V2/V3) + ChainlinkAdapter; no Pyth here.
         router = new OracleRouterV4(priceOracle, address(v4), address(0), chainlinkAdapter, deployer);
 

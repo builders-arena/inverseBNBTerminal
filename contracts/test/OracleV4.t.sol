@@ -30,7 +30,7 @@ contract OracleV4Test is Test {
 
     function setUp() public {
         sv = new MockStateView(address(0x9999));
-        v4 = new V4Source(WETH, address(sv), FLOOR, guardian);
+        v4 = new V4Source(WETH, address(sv), FLOOR, 5 minutes, guardian);
 
         ethKey = V4PoolId.PoolKey({
             currency0: address(0),
@@ -294,6 +294,32 @@ contract OracleV4Test is Test {
         assertFalse(s.warming);
         assertEq(s.twap, _spot(Q96, false));
         assertGt(s.reserveBnb, 0);
+    }
+
+    // =========================================================================
+    //                          MAX_SNAPSHOT_AGE (constructor param)
+    // =========================================================================
+
+    /// A generous staleness guard tolerates a gap that the 5-min default would reject — the fix for
+    /// jittery */5 cron. Same pool/ring as setUp's 5-min source, but a second 20-min source.
+    function test_MaxSnapshotAge_Generous_ToleratesLongGap() public {
+        V4Source v4b = new V4Source(WETH, address(sv), FLOOR, 20 minutes, guardian);
+        v4b.register(TOKEN, ethKey);
+        sv.setSqrtPrice(ethId, Q96);
+        v4b.snapshot(TOKEN); // sample A @ t
+        vm.warp(block.timestamp + 6 minutes);
+        v4b.snapshot(TOKEN); // sample B; anchor A now 6min old (in window)
+        // newest B is fresh here; advance so the newest sample is 6 min old — Stale under a 5-min guard,
+        // fine under 20 min.
+        vm.warp(block.timestamp + 6 minutes);
+        assertEq(v4b.getPrice(TOKEN), _spot(Q96, false)); // prices, does not revert Stale
+    }
+
+    function test_MaxSnapshotAge_ConstructorBounds() public {
+        vm.expectRevert(abi.encodeWithSelector(Errors.OutOfBounds.selector, 4 minutes, 5 minutes, 30 minutes));
+        new V4Source(WETH, address(sv), FLOOR, 4 minutes, guardian); // below WINDOW_MIN
+        vm.expectRevert(abi.encodeWithSelector(Errors.OutOfBounds.selector, 31 minutes, 5 minutes, 30 minutes));
+        new V4Source(WETH, address(sv), FLOOR, 31 minutes, guardian); // above WINDOW_MAX
     }
 
     function _absDiff(uint256 a, uint256 b) internal pure returns (uint256) {

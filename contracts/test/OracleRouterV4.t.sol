@@ -31,7 +31,7 @@ contract OracleRouterV4Test is Test {
     function setUp() public {
         pool = new MockPriceOracle(42e18, 7e18, FLOOR);
         sv = new MockStateView(address(0x9999));
-        v4 = new V4Source(WETH, address(sv), FLOOR, address(this));
+        v4 = new V4Source(WETH, address(sv), FLOOR, 5 minutes, address(this));
         router = new OracleRouterV4(address(pool), address(v4), address(0), address(0), address(this));
 
         key = V4PoolId.PoolKey({

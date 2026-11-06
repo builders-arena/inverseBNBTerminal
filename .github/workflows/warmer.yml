@@ -1,0 +1,60 @@
+name: warmer
+
+# Keeps the V4 (and V2) sampled-TWAP oracle rings fresh. A V4 ring is only as fresh as the last
+# on-chain snapshot tx, and V4Source.getPrice reverts Stale once the newest sample exceeds
+# MAX_SNAPSHOT_AGE (deployed at ~20 min). There is NO always-on host (migrated off Fly) and GitHub's
+# */5 cron is best-effort and jitters minutes late, so ONE snapshot per tick would flap the market
+# offline. Instead each run snapshots repeatedly across most of the 5-min window (`warmer --once` ->
+# cronWarm: every WARMER_CRON_INTERVAL_MS for WARMER_CRON_DURATION_MS), so coverage overlaps across
+# ticks and the newest sample stays well inside MAX_SNAPSHOT_AGE even if a tick is skipped or late.
+#
+# ⚠️ CUTOVER: the addresses below point at the NEW V4 stack. They are the FIRST V4 deploy
+# (script/DeployV4.s.sol, 2026-11-06). If DeployV4 is re-broadcast (e.g. the held ring-freshness
+# redeploy), update ORACLE_ADDRESS + the *_ADDRESS block here AND in indexer.yml / keeper.yml to the
+# final re-deployed stack, and set V4_MARKETS to each V4-routed token. This workflow is inert until
+# the router actually routes those tokens to V4 (before cutover, warming is a cheap no-op).
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch: {}
+
+concurrency:
+  group: warmer
+  cancel-in-progress: false
+
+jobs:
+  warm:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    env:
+      # --- secrets (set in repo Settings → Secrets and variables → Actions) ---
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      RPC_URL_PRIMARY: ${{ secrets.RPC_URL_PRIMARY }}
+      WARMER_PRIVATE_KEY: ${{ secrets.WARMER_PRIVATE_KEY }}
+      # --- public config (Robinhood Chain mainnet 4663) — NEW V4 stack ---
+      CHAIN_ID: "4663"
+      RPC_URL_SECONDARY: "https://rpc.mainnet.chain.robinhood.com"
+      ORACLE_ADDRESS: "0xE7c3c9b54612c5127C38359aa06c38227d600E82"
+      ENGINE_ADDRESS: "0x6D25582BD13144Ceb4B259BB13896Ffc6D7f55E4"
+      VAULT_ADDRESS: "0x9A8eb055450a1b2F03Fe4d57Fcdf27bc6533D9FD"
+      SESSION_MANAGER_ADDRESS: "0x52E5CE7bCfa8e58AC34d6ffCEFCe62214CC60137"
+      FEE_DISTRIBUTOR_ADDRESS: "0x605E901B31Fe94e197604B0ED6a1654009ed656b"
+      WBNB_ADDRESS: "0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73"
+      # V4-routed market token ids to keep warm (CSV). ROBINHOOD is the pilot.
+      V4_MARKETS: "0x008Df4b3E857D06c4603Aeb11F267ccD32ce2005"
+      WARMER_CRON_DURATION_MS: "270000"
+      WARMER_CRON_INTERVAL_MS: "75000"
+      LOG_LEVEL: "info"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: npx prisma generate
+      - run: npx tsx src/services/warmer.ts --once

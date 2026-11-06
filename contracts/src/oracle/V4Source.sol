@@ -42,7 +42,14 @@ contract V4Source is IPriceOracle, Governed {
     uint256 public constant SAMPLE_MIN_GAP = 60; // min spacing between stored samples
     uint256 public constant WINDOW_MIN = 5 minutes; // youngest acceptable anchor age
     uint256 public constant WINDOW_MAX = 30 minutes; // oldest acceptable anchor age
-    uint256 public constant MAX_SNAPSHOT_AGE = 5 minutes; // newest stored sample must be fresher
+    /// @notice Newest stored sample must be fresher than this, else getPrice reverts Stale. Set per
+    ///         deployment (constructor) within [WINDOW_MIN, WINDOW_MAX]. Unlike PriceOracle's V2 path —
+    ///         whose cumulative is always live on-chain — a V4 sampled ring is only as fresh as the last
+    ///         snapshot tx, so this must exceed the real worst-case gap between warmer snapshots. On
+    ///         best-effort infra (GitHub-Actions */5 cron, which jitters minutes late and has no
+    ///         always-on host) a 5-min value flaps Stale; ~20 min survives several missed/late ticks
+    ///         while the [WINDOW_MIN, WINDOW_MAX] TWAP window and the deviation breaker are unchanged.
+    uint256 public immutable MAX_SNAPSHOT_AGE;
     uint8 internal constant RING = 16;
 
     // ---- Sampled-spot ring buffer ----
@@ -75,12 +82,20 @@ contract V4Source is IPriceOracle, Governed {
     event SnapshotTaken(address indexed token, uint32 timestamp, uint256 spot);
     event HaltSet(address indexed token, bool halted);
 
-    constructor(address weth_, address stateView_, uint256 liqFloor_, address guardian_) Governed(guardian_) {
+    constructor(address weth_, address stateView_, uint256 liqFloor_, uint256 maxSnapshotAge_, address guardian_)
+        Governed(guardian_)
+    {
         if (weth_ == address(0) || stateView_ == address(0)) revert Errors.ZeroAddress();
         if (liqFloor_ == 0) revert Errors.ZeroAmount();
+        // Keep the staleness guard within the TWAP window bounds: too low flaps Stale on jittery cron,
+        // too high prices off data older than the TWAP window itself.
+        if (maxSnapshotAge_ < WINDOW_MIN || maxSnapshotAge_ > WINDOW_MAX) {
+            revert Errors.OutOfBounds(maxSnapshotAge_, WINDOW_MIN, WINDOW_MAX);
+        }
         WETH = weth_;
         stateView = IStateView(stateView_);
         LIQ_FLOOR = liqFloor_;
+        MAX_SNAPSHOT_AGE = maxSnapshotAge_;
     }
 
     // =========================================================================

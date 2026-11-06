@@ -243,3 +243,42 @@ backend + on-chain cut over together (runbook step 5).
 **Also before migration:** ✅ live-engine address discrepancy resolved (§1 — migrate from the v2
 stack); still to do — apply the one-line V4 dead-end removal in the external React app repo (not in
 this checkout).
+
+---
+
+## 6. V4 ring freshness on serverless / cron infra (added 2026-11-06)
+
+**Problem.** `V4Source.getPrice` reverts `Stale` if the newest ring sample is older than
+`MAX_SNAPSHOT_AGE`. The ring is only as fresh as the last snapshot tx, and the live infra is
+GitHub-Actions `*/5` cron — best-effort (jitters minutes late), one-shot (no always-on host; migrated
+off Fly). A 5-min guard + one snapshot per tick would routinely exceed 5 min and flap the market
+offline. There was also **no warmer workflow at all** (only indexer + keeper).
+
+**Fix — two layers:**
+1. **Tolerant, configurable staleness guard.** `MAX_SNAPSHOT_AGE` is now a V4Source **constructor
+   param** (immutable), bounded to `[WINDOW_MIN, WINDOW_MAX]` = [5 min, 30 min]; `DeployV4` defaults it
+   to **20 min** (env `MAX_SNAPSHOT_AGE`). This survives several missed/late `*/5` ticks. The TWAP
+   window (`WINDOW_MIN`/`WINDOW_MAX`) and the 25% deviation breaker are unchanged, so manipulation
+   resistance is unaffected — only the max price latency widens (≤20 min-old data). Kept immutable (not
+   guardian-settable) to preserve the oracle's no-mutable-params audit posture; a bounded guardian
+   setter is a one-line option if field tuning proves necessary.
+2. **Dedicated warmer workflow.** New `.github/workflows/warmer.yml` (`*/5` cron) runs
+   `warmer --once` → `cronWarm`, which snapshots all `V4_MARKETS` (+ V2 `WARM_TOKENS`) every
+   `WARMER_CRON_INTERVAL_MS` (75 s) for `WARMER_CRON_DURATION_MS` (4.5 min) then exits — so coverage
+   OVERLAPS across ticks and the newest sample stays well inside the 20-min guard even if a tick is
+   skipped. Needs repo secret `WARMER_PRIVATE_KEY` (the warmer EOA) + `V4_MARKETS` set.
+
+**Redeploy required (HELD — hand to user).** The already-deployed V4Source
+`0xC2B67771…` was built with the old 5-min constant, so the fix needs a fresh `DeployV4` broadcast.
+That produces a NEW stack and **supersedes the 2026-11-06 stack recorded in DEPLOYMENTS.md**
+(engine `0x6D25582B…` etc.) — which was never cut over, so discarding it costs only the ~0.00055 ETH
+gas. Re-broadcast with `MAX_SNAPSHOT_AGE=1200` (20 min) and the confirmed `LIQ_FLOOR`, then point the
+warmer/indexer/keeper workflows + backend at the FINAL addresses at cutover.
+
+**Indexer/keeper readiness (#4).** `indexer.yml` and `keeper.yml` currently target the **live v2**
+stack (`ENGINE 0xD7b150C2`, `ORACLE 0xB8638fd2`, `DEPLOY_BLOCK 107090000`) — correct for now, since
+they must keep serving the old engine until cutover. They do **not** yet target the new engine, and
+should not until the flip. At cutover, update `ORACLE_ADDRESS` / `ENGINE_ADDRESS` (+ VAULT / SESSION /
+FEE) and **`DEPLOY_BLOCK`** (to the new engine's deploy block, so the indexer doesn't rescan history)
+in all three workflows (indexer, keeper, warmer) to the final re-deployed addresses. Recommend moving
+these to repo *variables* so cutover is a settings change, not a code edit.

@@ -36,6 +36,12 @@ const schema = z.object({
   INDEXER_BLOCK_BATCH: z.coerce.number().default(2000),
   KEEPER_POLL_MS: z.coerce.number().default(3000),
   WARMER_INTERVAL_MS: z.coerce.number().default(60000),
+  // Cron-mode warmer (`warmer --once` on GitHub-Actions */5): snapshot every CRON_INTERVAL for
+  // CRON_DURATION, then exit. Duration spans most of the 5-min window so coverage overlaps across
+  // ticks (survives a skipped/late cron run); keep DURATION < 300000 so a run finishes before the
+  // next tick. Interval ~60-90s keeps the ring dense.
+  WARMER_CRON_DURATION_MS: z.coerce.number().default(270000), // 4.5 min
+  WARMER_CRON_INTERVAL_MS: z.coerce.number().default(75000), // 75 s
   LOG_LEVEL: z.string().default("info"),
 
   // ---- Pyth (cross-chain / feed-priced markets, e.g. SOL — settled in BNB) ----

@@ -23,7 +23,7 @@ contract V4TwapInvariantsTest is Test {
 
     function setUp() public {
         sv = new MockStateView(address(0x9999));
-        v4 = new V4Source(WETH, address(sv), 1e15, address(this));
+        v4 = new V4Source(WETH, address(sv), 1e15, 20 minutes, address(this));
 
         V4PoolId.PoolKey memory key = V4PoolId.PoolKey({
             currency0: TOKEN,
