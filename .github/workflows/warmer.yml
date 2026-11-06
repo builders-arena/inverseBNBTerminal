@@ -8,11 +8,11 @@ name: warmer
 # cronWarm: every WARMER_CRON_INTERVAL_MS for WARMER_CRON_DURATION_MS), so coverage overlaps across
 # ticks and the newest sample stays well inside MAX_SNAPSHOT_AGE even if a tick is skipped or late.
 #
-# ⚠️ CUTOVER: the addresses below point at the NEW V4 stack. They are the FIRST V4 deploy
-# (script/DeployV4.s.sol, 2026-11-06). If DeployV4 is re-broadcast (e.g. the held ring-freshness
-# redeploy), update ORACLE_ADDRESS + the *_ADDRESS block here AND in indexer.yml / keeper.yml to the
-# final re-deployed stack, and set V4_MARKETS to each V4-routed token. This workflow is inert until
-# the router actually routes those tokens to V4 (before cutover, warming is a cheap no-op).
+# ⚠️ CUTOVER: core addresses come from repo VARIABLES (shared with indexer.yml/keeper.yml), with the
+# current LIVE v2 addresses as `||` fallbacks, so nothing changes pre-cutover. V4_MARKETS defaults to
+# EMPTY, so this workflow is an inert no-op until cutover. At cutover set the repo variables
+# (ORACLE_ADDRESS/ENGINE_ADDRESS/… + DEPLOY_BLOCK) to the FINAL re-deployed V4 stack and set
+# V4_MARKETS to the V4-routed token ids (e.g. ROBINHOOD 0x008Df4b3E857D06c4603Aeb11F267ccD32ce2005).
 
 on:
   schedule:
@@ -34,17 +34,17 @@ jobs:
       DATABASE_URL: ${{ secrets.DATABASE_URL }}
       RPC_URL_PRIMARY: ${{ secrets.RPC_URL_PRIMARY }}
       WARMER_PRIVATE_KEY: ${{ secrets.WARMER_PRIVATE_KEY }}
-      # --- public config (Robinhood Chain mainnet 4663) — NEW V4 stack ---
+      # --- public config (Robinhood Chain mainnet 4663) — from repo variables, v2 fallbacks ---
       CHAIN_ID: "4663"
       RPC_URL_SECONDARY: "https://rpc.mainnet.chain.robinhood.com"
-      ORACLE_ADDRESS: "0xE7c3c9b54612c5127C38359aa06c38227d600E82"
-      ENGINE_ADDRESS: "0x6D25582BD13144Ceb4B259BB13896Ffc6D7f55E4"
-      VAULT_ADDRESS: "0x9A8eb055450a1b2F03Fe4d57Fcdf27bc6533D9FD"
-      SESSION_MANAGER_ADDRESS: "0x52E5CE7bCfa8e58AC34d6ffCEFCe62214CC60137"
-      FEE_DISTRIBUTOR_ADDRESS: "0x605E901B31Fe94e197604B0ED6a1654009ed656b"
+      ORACLE_ADDRESS: "${{ vars.ORACLE_ADDRESS || '0xB8638fd2d0B99d5369403fA7d7C78F5821461721' }}"
+      ENGINE_ADDRESS: "${{ vars.ENGINE_ADDRESS || '0xD7b150C2173Db592b3F8FDA65BeE8F99245D468d' }}"
+      VAULT_ADDRESS: "${{ vars.VAULT_ADDRESS || '0x3BCfe3bD9a8D3F234D59638837a8fe7a338Bb439' }}"
+      SESSION_MANAGER_ADDRESS: "${{ vars.SESSION_MANAGER_ADDRESS || '0x7D013b7660b3fE08EE43E12FB433F83AD6c00593' }}"
+      FEE_DISTRIBUTOR_ADDRESS: "${{ vars.FEE_DISTRIBUTOR_ADDRESS || '0xaC271CD320f94f6D6b0CBC3340F0bd5b533EeD85' }}"
       WBNB_ADDRESS: "0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73"
-      # V4-routed market token ids to keep warm (CSV). ROBINHOOD is the pilot.
-      V4_MARKETS: "0x008Df4b3E857D06c4603Aeb11F267ccD32ce2005"
+      # V4-routed market token ids to keep warm (CSV). EMPTY until cutover => warmer is an inert no-op.
+      V4_MARKETS: "${{ vars.V4_MARKETS || '' }}"
       WARMER_CRON_DURATION_MS: "270000"
       WARMER_CRON_INTERVAL_MS: "75000"
       LOG_LEVEL: "info"
