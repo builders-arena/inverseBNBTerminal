@@ -31,6 +31,9 @@ const schema = z.object({
 
   INDEXER_POLL_MS: z.coerce.number().default(3000),
   INDEXER_CONFIRMATIONS: z.coerce.number().default(1),
+  // Max block range per eth_getLogs call. Keep <= 10 for Alchemy's free tier; the public Robinhood
+  // RPC allows larger ranges. Lower = more calls but safer against provider range caps.
+  INDEXER_BLOCK_BATCH: z.coerce.number().default(2000),
   KEEPER_POLL_MS: z.coerce.number().default(3000),
   WARMER_INTERVAL_MS: z.coerce.number().default(60000),
   LOG_LEVEL: z.string().default("info"),

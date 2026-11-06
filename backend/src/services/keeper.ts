@@ -90,7 +90,15 @@ async function main(): Promise<void> {
   const provider = makeProvider();
   const wallet = walletFrom(config.KEEPER_PRIVATE_KEY, provider);
   const { engine } = contracts(wallet);
-  logger.info({ keeper: wallet.address }, "keeper starting");
+  const once = process.argv.includes("--once");
+  logger.info({ keeper: wallet.address, mode: once ? "once" : "loop" }, "keeper starting");
+
+  if (once) {
+    // Cron mode (GitHub Actions): one liquidation/TP-SL sweep, then exit.
+    await tick(engine, wallet);
+    logger.info("keeper tick complete");
+    return;
+  }
 
   for (;;) {
     try {

@@ -1,0 +1,50 @@
+name: keeper
+
+# Replaces the always-on Fly "keeper" process with a scheduled liquidation / TP-SL sweep. Each run
+# reads open positions (indexed into Postgres by the indexer workflow) and liquidates / closes any
+# that breach their thresholds, signing with KEEPER_PRIVATE_KEY.
+# NOTE: GitHub's 5-minute minimum cron means up to a few minutes of liquidation latency — acceptable
+# for small size, not for serious leverage. GitHub only schedules on the default branch.
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch: {}
+
+concurrency:
+  group: keeper
+  cancel-in-progress: false
+
+jobs:
+  keep:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    env:
+      # --- secrets ---
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      KEEPER_PRIVATE_KEY: ${{ secrets.KEEPER_PRIVATE_KEY }}
+      RPC_URL_PRIMARY: ${{ secrets.RPC_URL_PRIMARY }}
+      # --- public config (Robinhood Chain mainnet 4663) ---
+      CHAIN_ID: "4663"
+      RPC_URL_SECONDARY: "https://rpc.mainnet.chain.robinhood.com"
+      ORACLE_ADDRESS: "0xB8638fd2d0B99d5369403fA7d7C78F5821461721"
+      ENGINE_ADDRESS: "0xD7b150C2173Db592b3F8FDA65BeE8F99245D468d"
+      VAULT_ADDRESS: "0x3BCfe3bD9a8D3F234D59638837a8fe7a338Bb439"
+      SESSION_MANAGER_ADDRESS: "0x7D013b7660b3fE08EE43E12FB433F83AD6c00593"
+      FEE_DISTRIBUTOR_ADDRESS: "0xaC271CD320f94f6D6b0CBC3340F0bd5b533EeD85"
+      WBNB_ADDRESS: "0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73"
+      DEPLOY_BLOCK: "107090000"
+      CHAINLINK_MARKETS: "0x0000000000000000000000000000000000000401"
+      LOG_LEVEL: "info"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: npx prisma generate
+      - run: npx tsx src/services/keeper.ts --once

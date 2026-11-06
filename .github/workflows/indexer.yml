@@ -1,0 +1,50 @@
+name: indexer
+
+# Replaces the always-on Fly "indexer" process with a scheduled catch-up pass. The IndexerState
+# cursor in Postgres (Neon) persists progress, so each run resumes where the last left off.
+# NOTE: GitHub only runs scheduled workflows on the default branch, and disables them after ~60 days
+# with no repo activity. Minimum cron granularity is 5 minutes (and runs can be delayed under load).
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch: {}
+
+concurrency:
+  group: indexer
+  cancel-in-progress: false
+
+jobs:
+  index:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    env:
+      # --- secrets (set in repo Settings → Secrets and variables → Actions) ---
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      RPC_URL_PRIMARY: ${{ secrets.RPC_URL_PRIMARY }}
+      # --- public config (Robinhood Chain mainnet 4663) ---
+      CHAIN_ID: "4663"
+      RPC_URL_SECONDARY: "https://rpc.mainnet.chain.robinhood.com"
+      ORACLE_ADDRESS: "0xB8638fd2d0B99d5369403fA7d7C78F5821461721"
+      ENGINE_ADDRESS: "0xD7b150C2173Db592b3F8FDA65BeE8F99245D468d"
+      VAULT_ADDRESS: "0x3BCfe3bD9a8D3F234D59638837a8fe7a338Bb439"
+      SESSION_MANAGER_ADDRESS: "0x7D013b7660b3fE08EE43E12FB433F83AD6c00593"
+      FEE_DISTRIBUTOR_ADDRESS: "0xaC271CD320f94f6D6b0CBC3340F0bd5b533EeD85"
+      WBNB_ADDRESS: "0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73"
+      DEPLOY_BLOCK: "107090000"
+      CHAINLINK_MARKETS: "0x0000000000000000000000000000000000000401"
+      INDEXER_BLOCK_BATCH: "10"
+      INDEXER_CONFIRMATIONS: "1"
+      LOG_LEVEL: "info"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: npx prisma generate
+      - run: npx tsx src/services/indexer.ts --once

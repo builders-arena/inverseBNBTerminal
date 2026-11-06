@@ -5,7 +5,7 @@ import { prisma } from "../lib/db.js";
 import { makeProvider, contracts } from "../lib/chain.js";
 import { alert } from "../lib/alerts.js";
 
-const BLOCK_BATCH = 2000; // max range per queryFilter call
+const BLOCK_BATCH = config.INDEXER_BLOCK_BATCH; // max range per eth_getLogs call (provider-capped)
 const PRICE_SAMPLE_MS = 60_000; // min spacing between candle price samples per token
 
 const ERC20_META_ABI = [
@@ -214,46 +214,57 @@ async function handleLog(engine: ethers.Contract, vault: ethers.Contract, log: e
   }
 }
 
+/// One catch-up pass: sample prices, scan from the persisted cursor to chain head in batches, then
+/// snapshot the pool. The IndexerState cursor persists progress, so this is safe to call once per
+/// cron invocation (GitHub Actions) or repeatedly in the long-running loop (local/Fly). Throws on
+/// provider/db errors so the caller decides whether to retry (loop) or fail the run (cron).
+async function runOnce(
+  provider: ethers.AbstractProvider,
+  c: ReturnType<typeof contracts>,
+  engineAddr: string,
+  vaultAddr: string,
+  priceSampleLast: Map<string, number>,
+): Promise<void> {
+  const head = BigInt(await provider.getBlockNumber()) - BigInt(config.INDEXER_CONFIRMATIONS);
+  await samplePrices(c.oracle, head, priceSampleLast);
+  let from = (await getCursor()) + 1n;
+  if (from > head) return;
+  let processedAny = false;
+  while (from <= head) {
+    const to = from + BigInt(BLOCK_BATCH) - 1n > head ? head : from + BigInt(BLOCK_BATCH) - 1n;
+    const logs = await provider.getLogs({ fromBlock: from, toBlock: to, address: [engineAddr, vaultAddr] });
+    logs.sort((a, b) => a.blockNumber - b.blockNumber || a.index - b.index);
+    for (const log of logs) await handleLog(c.engine, c.vault, log);
+    await setCursor(to);
+    logger.info({ from: from.toString(), to: to.toString(), count: logs.length }, "indexed range");
+    if (logs.length > 0) processedAny = true;
+    from = to + 1n;
+  }
+  if (processedAny) await samplePool(c.vault, head);
+}
+
 async function main(): Promise<void> {
   const provider = makeProvider();
   const c = contracts(provider);
-  logger.info("indexer starting");
-
-  // Reusable event filters (topics) for engine + vault.
   const engineAddr = await c.engine.getAddress();
   const vaultAddr = await c.vault.getAddress();
   const priceSampleLast = new Map<string, number>();
+  const once = process.argv.includes("--once");
+  logger.info({ mode: once ? "once" : "loop" }, "indexer starting");
+
+  if (once) {
+    // Cron mode (GitHub Actions): one catch-up pass, then exit. A throw propagates and fails the run.
+    await runOnce(provider, c, engineAddr, vaultAddr, priceSampleLast);
+    logger.info("indexer pass complete");
+    return;
+  }
 
   for (;;) {
     try {
-      const head = BigInt(await provider.getBlockNumber()) - BigInt(config.INDEXER_CONFIRMATIONS);
-      await samplePrices(c.oracle, head, priceSampleLast);
-      let from = (await getCursor()) + 1n;
-      if (from > head) {
-        await sleep(config.INDEXER_POLL_MS);
-        continue;
-      }
-      let processedAny = false;
-      while (from <= head) {
-        const to = from + BigInt(BLOCK_BATCH) - 1n > head ? head : from + BigInt(BLOCK_BATCH) - 1n;
-        const logs = await provider.getLogs({
-          fromBlock: from,
-          toBlock: to,
-          address: [engineAddr, vaultAddr],
-        });
-        // Preserve on-chain order.
-        logs.sort((a, b) => a.blockNumber - b.blockNumber || a.index - b.index);
-        for (const log of logs) await handleLog(c.engine, c.vault, log);
-        await setCursor(to);
-        logger.info({ from: from.toString(), to: to.toString(), count: logs.length }, "indexed range");
-        if (logs.length > 0) processedAny = true;
-        from = to + 1n;
-      }
-      if (processedAny) await samplePool(c.vault, head);
+      await runOnce(provider, c, engineAddr, vaultAddr, priceSampleLast);
     } catch (err) {
       logger.error({ err }, "indexer loop error");
       await alert("indexer error (see logs)");
-      await sleep(config.INDEXER_POLL_MS);
     }
     await sleep(config.INDEXER_POLL_MS);
   }
