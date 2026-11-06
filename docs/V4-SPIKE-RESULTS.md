@@ -9,11 +9,28 @@ Nothing here has been deployed or broadcast. The live guardian key
 (`0x34a87c1AD83cB466a479AB32fa34eD0be59dFd70`) is not in this repo; every mainnet step below is for
 the key holder to run.
 
-> Note: this branch's `contracts/DEPLOYMENTS.md` lists the live engine as
-> `InverseEngine 0x2effDFB516bfF45503901e58Fb715e582328C53F`, while the task hand-off quoted
-> `0xD7b150C2173Db592b3F8FDA65BeE8F99245D468d`. **This discrepancy must be resolved before migration** —
-> confirm the real live engine with `cast call <engine> "oracle()(address)"` == the live OracleRouter
-> `0xff5033731E3C644Fd14E08A072224fa1B286d226`.
+> **Live stack — resolved & verified on-chain 2026-11-06 (chain 4663).** The migration targets the
+> **v2 (stkmemes)** stack; the `0x2effDFB5…`/`0xff5033…` pair in this branch's (stale) `DEPLOYMENTS.md`
+> is **v1, superseded**. Verified: `engine 0xD7b150C2…`.`oracle()` == `0xB8638fd2…`,
+> `maxLeverageEnabled()` == 10, `asset()` == WETH; and `engine 0x2effDFB5…`.`oracle()` == `0xff5033…`
+> (the v1 pair). The live backend (`.github/workflows/{indexer,keeper}.yml`) hardcodes the v2
+> addresses. Both routers return identical prices (shared Chainlink adapter + V3 pools), so there was
+> no live mismatch — only the superseded table. **Live v2 stack to migrate from:**
+>
+> | Contract | Address |
+> | --- | --- |
+> | Engine | `0xD7b150C2173Db592b3F8FDA65BeE8F99245D468d` |
+> | OracleRouter | `0xB8638fd2d0B99d5369403fA7d7C78F5821461721` |
+> | Vault | `0x3BCfe3bD9a8D3F234D59638837a8fe7a338Bb439` |
+> | FeeDistributor | `0xaC271CD320f94f6D6b0CBC3340F0bd5b533EeD85` |
+> | SessionManager | `0x7D013b7660b3fE08EE43E12FB433F83AD6c00593` |
+> | PriceOracle | `0x425815165E2a8b0c46D9F049497bE277Ff75E315` |
+> | ChainlinkAdapter | `0x395D7D98d05189516515a774A44AC6D6b7D1FE77` |
+> | asset (WETH) | `0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73` |
+>
+> The V4 migration reuses the v2 `PriceOracle` + `ChainlinkAdapter` behind the new router, and deploys
+> a new engine/vault/fee-distributor/session-manager (pointer audit in §3). This branch's
+> `DEPLOYMENTS.md` is v1-only and stale; the current v2 table lives in the main checkout.
 
 ---
 
@@ -116,7 +133,8 @@ re-pointed:
   live vault is permanently bound to the old engine ⇒ **new vault required**.
 - `FeeDistributor.vault` is **immutable** → tied to the old vault ⇒ **new fee distributor required**.
 - `SessionManager.engine` is **immutable** → **new session manager required**.
-- Reusable as-is: `PriceOracle` (V2/V3), `ChainlinkAdapter`, `KeeperFunder` (re-wire).
+- Reusable as-is (v2 live addresses): `PriceOracle` `0x425815165E2a8b0c46D9F049497bE277Ff75E315`,
+  `ChainlinkAdapter` `0x395D7D98d05189516515a774A44AC6D6b7D1FE77`, `KeeperFunder` (re-wire).
 So the migration deploys: V4Source + new OracleRouterV4 + new engine + new vault + new fee
 distributor + new session manager, reusing the existing PriceOracle + ChainlinkAdapter behind the
 new router.
@@ -141,9 +159,9 @@ LPs re-deposit into the new vault), which is operationally heavy on a live book 
 migrating first.
 
 **Pre-flight (read-only, anyone):**
-- [ ] Resolve the engine-address discrepancy (see top note): confirm the live engine and that its
-      `oracle()` == live router `0xff5033731E3C644Fd14E08A072224fa1B286d226`.
-- [ ] Confirm **no open positions** on the live engine and **vault NAV == 0 / balance == 0** (unseeded).
+- [x] Live stack resolved & verified: v2 engine `0xD7b150C2…` → router `0xB8638fd2…` (see top note).
+- [ ] Confirm **no open positions** on the live v2 engine `0xD7b150C2…` and **vault NAV == 0 /
+      balance == 0** on vault `0x3BCfe3bD…` (unseeded).
       If either is non-zero, STOP and switch to the seeded wind-down above before proceeding.
 - [ ] Deploy + verify the new stack on a fork and/or a fresh testnet; run fork tests green.
 
@@ -195,5 +213,6 @@ backend + on-chain cut over together (runbook step 5).
    manager + V4Source + OracleRouterV4), the unseeded clean-cutover handling of positions/funds, the
    guardian register/`setSource` steps, and rollback.
 
-**Also before migration:** resolve the live-engine address discrepancy (§1), and apply the one-line
-V4 dead-end removal in the external React app repo (not in this checkout).
+**Also before migration:** ✅ live-engine address discrepancy resolved (§1 — migrate from the v2
+stack); still to do — apply the one-line V4 dead-end removal in the external React app repo (not in
+this checkout).
