@@ -181,7 +181,11 @@ withdrawal path).
 
 ---
 
-## Robinhood Chain (chain 4663) — MAINNET — V4 migration stack — 2026-11-06
+## Robinhood Chain (chain 4663) — MAINNET — V4 migration stack — 2026-11-06 — ⚠️ SUPERSEDED
+
+**SUPERSEDED by the FINAL stack below** (re-deployed with the ring-freshness fix: `MAX_SNAPSHOT_AGE`
+20 min). This first stack (`V4Source 0xC2B67771…` / engine `0x6D25582B…`) was never cut over and is
+abandoned. Kept here for history only.
 
 Uniswap-V4-capable stack deployed and verified on-chain (guardian-broadcast via `script/DeployV4.s.sol`).
 **Deployed and wired, but NOT yet cut over** — the live v2 engine (`0xD7b150C2…`) is still the active
@@ -220,3 +224,35 @@ Chainlink price, `v4.poolOf(ROBINHOOD)` returns the validated key.
    "Market page and trade search issues" session).
 4. Seed the new vault WETH; warm the ROBINHOOD V4 ring (keeper/warmer) before expecting its TWAP.
 5. (Optional, later) Safe guardianship handoff for the new contracts.
+
+---
+
+## Robinhood Chain (chain 4663) — MAINNET — V4 migration stack — FINAL — 2026-11-06
+
+The live, current V4-capable stack (ring-freshness fix included: `V4Source.MAX_SNAPSHOT_AGE` = 20 min,
+immutable). Deployed + verified on-chain via `script/DeployV4.s.sol` (all 17 txs status 1).
+**Deployed and wired, but NOT cut over** — the live v2 engine `0xD7b150C2…` is still active; nothing
+points at this stack yet. Reuses the v2 `PriceOracle` `0x425815165E2a8b0c46D9F049497bE277Ff75E315` +
+`ChainlinkAdapter` `0x395D7D98d05189516515a774A44AC6D6b7D1FE77`. Guardian `0x34a87c1A…` (retained).
+
+| Contract        | Address                                      |
+| --------------- | -------------------------------------------- |
+| V4Source        | `0xd4057373Bfd10027E65df56E181745D271837E7B` |
+| OracleRouterV4  | `0x538de79fB7d1207E73330097e9f1B821710C993C` |
+| InverseEngine   | `0xcf7606a40F48266f547650209C88878453a00E84` |
+| InverseVault    | `0x146210648615C2c22D8F7a4Eabd0dC0A93f1978a` |
+| FeeDistributor  | `0xdEFA960FE529DCBbCCFc7D2F5dDd04E6Be06608E` |
+| SessionManager  | `0x8f144C7fae5F74910d2B4ff3cd2b2410E0035070` |
+| KeeperFunder    | `0x590f017F3613646D19D39dBB039482e8aa9837EF` |
+
+Engine DEPLOY_BLOCK (indexer scan start): **107788682** (first deploy tx; safe lower bound; deploy
+spanned blocks 107788682–107789142).
+
+Verified on-chain: `engine.oracle()==router`, `MAX_SNAPSHOT_AGE==1200`, `LIQ_FLOOR==0.1 ETH`,
+maxLeverage 10 + tiers 1/3 ETH, min 1e13 / max 0.5 / payoutCap 5% / poolCap 200, `vault.engine()==engine`,
+`sourceOf(BTC)==CHAINLINK` (live price), `sourceOf(ROBINHOOD)==V4` (poolId `0x7f82…5350`).
+
+**Cutover (set these as repo variables for indexer/keeper/warmer, then re-point + flip):**
+`ORACLE_ADDRESS=0x538de79f…`, `ENGINE_ADDRESS=0xcf7606a4…`, `VAULT_ADDRESS=0x14621064…`,
+`SESSION_MANAGER_ADDRESS=0x8f144C7f…`, `FEE_DISTRIBUTOR_ADDRESS=0xdEFA960F…`, `DEPLOY_BLOCK=107788682`,
+and warmer `V4_MARKETS=0x008Df4b3E857D06c4603Aeb11F267ccD32ce2005`.
