@@ -6,8 +6,9 @@ import { config } from "../lib/config.js";
 import { logger } from "../lib/logger.js";
 import { prisma, jsonSafe } from "../lib/db.js";
 import { makeProvider, contracts } from "../lib/chain.js";
+import { v4Enabled, discoverPoolsForToken, readV4Pool } from "../lib/v4.js";
 
-const ROUTE = ["NONE", "V2", "V3"] as const;
+const ROUTE = ["NONE", "V2", "V3", "V4"] as const;
 const DAY = 86_400n;
 
 // Server-side cache for the GeckoTerminal proxy (see the /gt/* route). One upstream call per path per
@@ -164,6 +165,35 @@ export async function buildApp() {
       take: 500,
     });
     return jsonSafe(rows);
+  });
+
+  // V4 pool discovery: find the {ETH/WETH, token} Uniswap V4 pool(s) for a token from the PoolManager
+  // Initialize events and read their live slot0/liquidity. Returns the recovered PoolKey + poolId so a
+  // guardian can register the market on-chain (V4Source.register is guardian-gated by design). Read-only.
+  app.get<{ Params: { token: string } }>("/v4/pools/:token", async (req, reply) => {
+    if (!v4Enabled()) {
+      reply.code(501);
+      return { error: "v4 discovery not configured (set POOL_MANAGER_ADDRESS + STATE_VIEW_ADDRESS)" };
+    }
+    const token = req.params.token;
+    try {
+      const pools = await withTimeout(discoverPoolsForToken(provider, token), 30000);
+      const out = [];
+      for (const p of pools) {
+        let live: { sqrtPriceX96: string; tick: number; liquidity: string } | null = null;
+        try {
+          const s = await readV4Pool(provider, p.poolId);
+          live = { sqrtPriceX96: s.sqrtPriceX96.toString(), tick: s.tick, liquidity: s.liquidity.toString() };
+        } catch {
+          /* pool not readable this block */
+        }
+        out.push({ ...p, live });
+      }
+      return { token: token.toLowerCase(), pools: out };
+    } catch (err) {
+      reply.code(502);
+      return { token: token.toLowerCase(), error: (err as Error).message };
+    }
   });
 
   // ---- Cached GeckoTerminal proxy ----

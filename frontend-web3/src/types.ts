@@ -24,7 +24,7 @@ export class OrderError extends Error {
   }
 }
 
-export type Route = "NONE" | "V2" | "V3";
+export type Route = "NONE" | "V2" | "V3" | "V4";
 export type Side = "long" | "short";
 
 export interface OracleStatus {

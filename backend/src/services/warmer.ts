@@ -1,26 +1,30 @@
 import { ethers } from "ethers";
-import { config, warmTokens } from "../lib/config.js";
+import { config, warmTokens, v4MarketTokens } from "../lib/config.js";
 import { logger } from "../lib/logger.js";
 import { makeProvider, contracts, walletFrom } from "../lib/chain.js";
 import { pythEnabled, postPythUpdates, allPythFeedIds } from "../lib/pyth.js";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-/// Keeps trending tokens' V2 oracle snapshots fresh so traders rarely hit OracleWarming.
-async function v2WarmLoop(oracle: ethers.Contract): Promise<void> {
-  if (warmTokens.length === 0) {
-    logger.warn("no WARM_TOKENS configured; V2 warmer idle");
+/// Keeps trending tokens' sampled-TWAP oracle snapshots fresh so traders rarely hit OracleWarming.
+/// Covers the two routes whose ring is written by snapshot(): V2 lazy TWAP (route 1) and V4 sampled
+/// spot (route 3). V3 (route 2) keeps its own on-chain observations and needs no warming.
+async function sampledTwapWarmLoop(oracle: ethers.Contract): Promise<void> {
+  const tokens = [...new Set([...warmTokens, ...v4MarketTokens])];
+  if (tokens.length === 0) {
+    logger.warn("no WARM_TOKENS / V4_MARKETS configured; sampled-TWAP warmer idle");
     return;
   }
   for (;;) {
-    for (const token of warmTokens) {
+    for (const token of tokens) {
       try {
         const status = await oracle.status(token);
-        // Only pay gas when a refresh is actually useful (route 1 == V2 lazy TWAP).
-        if (status.supported && Number(status.route) === 1) {
+        // Only pay gas when a refresh is actually useful (route 1 == V2 lazy TWAP, 3 == V4 sampled spot).
+        const route = Number(status.route);
+        if (status.supported && (route === 1 || route === 3)) {
           const tx = await oracle.snapshot(token);
           await tx.wait(1);
-          logger.debug({ token, tx: tx.hash }, "warmed");
+          logger.debug({ token, route, tx: tx.hash }, "warmed");
         }
       } catch (err) {
         logger.debug({ token, err: (err as Error).message }, "warm skip");
@@ -57,8 +61,8 @@ async function main(): Promise<void> {
   const { oracle } = contracts(wallet);
   logger.info({ warmer: wallet.address, tokens: warmTokens }, "warmer starting");
 
-  // Run the pool (V2) snapshot loop and the Pyth feed loop concurrently; neither returns.
-  await Promise.all([v2WarmLoop(oracle), pythPostLoop(wallet)]);
+  // Run the sampled-TWAP (V2/V4) snapshot loop and the Pyth feed loop concurrently; neither returns.
+  await Promise.all([sampledTwapWarmLoop(oracle), pythPostLoop(wallet)]);
 }
 
 main().catch((err) => {

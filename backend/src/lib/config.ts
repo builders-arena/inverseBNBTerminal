@@ -58,6 +58,20 @@ const schema = z.object({
   // How often the warmer posts fresh Pyth updates on-chain. Must be comfortably below the
   // adapter's maxAge (default 60s) so feed prices never go stale between posts.
   PYTH_POST_INTERVAL_MS: z.coerce.number().default(15000),
+
+  // ---- Uniswap V4 (DEX pools read via StateView; priced by the V4Source behind OracleRouterV4) ----
+  // The V4 StateView lens + PoolManager singleton. On Robinhood Chain (4663):
+  //   STATE_VIEW=0xF3334192D15450CdD385c8B70e03f9A6bD9E673b
+  //   POOL_MANAGER=0x8366a39CC670B4001A1121B8F6A443A643e40951
+  // Unset => V4 discovery is disabled (the market still prices on-chain through the router).
+  STATE_VIEW_ADDRESS: z.string().optional(),
+  POOL_MANAGER_ADDRESS: z.string().optional(),
+  // Earliest block to scan for PoolManager `Initialize` events during discovery (defaults to DEPLOY_BLOCK).
+  V4_FROM_BLOCK: z.coerce.number().optional(),
+  // CSV of V4 market token ids (the on-chain market id registered via OracleRouterV4.setSource(V4) and
+  // V4Source.register). Like CHAINLINK_MARKETS, this only tells the indexer/warmer which tokens to
+  // sample + keep warm; the on-chain V4Source prices them. The poolId is discovered on-chain.
+  V4_MARKETS: z.string().default(""),
 });
 
 const parsed = schema.safeParse(process.env);
@@ -115,5 +129,11 @@ export const pythByToken = new Map<string, PythMarket>(pythMarkets.map((m) => [m
 /// Chainlink (push-feed) market token ids, lowercased. Priced on-chain by Chainlink's nodes, so no
 /// backend posting is needed — the indexer samples these for the candle series like any other market.
 export const chainlinkMarketTokens: string[] = config.CHAINLINK_MARKETS.split(",")
+  .map((t) => t.trim().toLowerCase())
+  .filter((t) => t.length > 0);
+
+/// Uniswap V4 market token ids, lowercased. Priced on-chain by the V4Source (sampled-spot TWAP), so the
+/// warmer keeps their ring fresh (like V2) and the indexer samples them for the candle series.
+export const v4MarketTokens: string[] = config.V4_MARKETS.split(",")
   .map((t) => t.trim().toLowerCase())
   .filter((t) => t.length > 0);

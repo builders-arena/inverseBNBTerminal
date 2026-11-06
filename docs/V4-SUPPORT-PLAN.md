@@ -157,3 +157,44 @@ depth need no new math, only the StateView plumbing and the ETH(token0)/WETH-set
    execution price and can sit static. V4 slot0 carries no timestamp, so a stuck price can't be
    detected as stale. Mitigation options in the sign-off doc (registry allowlist of
    standard-behaviour pools, or a hook-flag check at registration).
+
+---
+
+## 10. Phase 3 (backend) + Phase 5 (frontend) — implemented 2026-11-06
+
+**Backend (`backend/`):** V4 markets price through `OracleRouterV4.status()` exactly like Chainlink/
+Pyth feeds, so no per-read StateView plumbing was needed in the hot path — the on-chain `V4Source`
+already encapsulates the StateView reads. Changes:
+- `api.ts`: `ROUTE` map gains `"V4"` (index 3), so `/oracle/:token/status` and `/markets` label V4
+  markets correctly. New read-only **discovery endpoint `GET /v4/pools/:token`**: finds the
+  `{ETH/WETH, token}` V4 pool(s) from the PoolManager `Initialize` events (filtered on the indexed
+  currency), returns the recovered `PoolKey` + poolId + live slot0/liquidity for the guardian to
+  register.
+- `lib/v4.ts` (new): `poolIdFromKey` (matches the on-chain `V4PoolId.toId`), `discoverPoolsForToken`
+  (chunked, currency-topic-filtered event scan — no DexScreener trust), `readV4Pool` (StateView).
+- `lib/config.ts` + `.env.example`: `STATE_VIEW_ADDRESS`, `POOL_MANAGER_ADDRESS`, `V4_FROM_BLOCK`,
+  `V4_MARKETS` (+ exported `v4MarketTokens`).
+- `warmer.ts`: the snapshot loop now warms V4 (route 3) tokens as well as V2 (route 1) — both use a
+  snapshot-written ring. `indexer.ts`: `samplePrices` includes `v4MarketTokens` for the candle series.
+- `ORACLE_ADDRESS` must be the new `OracleRouterV4` for any of this to route to V4.
+
+**Registration is a GUARDIAN action, not keeper-automated.** `V4Source.register` is `onlyGuardian`
+(the Stage-0 allowlist / custom-curve-hook mitigation), so the keeper cannot auto-register. The
+backend *discovers* candidate pools; the guardian reviews and registers. To register ROBINHOOD on the
+live stack (after deploying the V4-capable router/engine), the guardian runs:
+```bash
+# key = {currency0, currency1, fee, tickSpacing, hooks}; poolId validated by /v4/pools/:token
+cast send <V4Source> 'register(address,(address,address,uint24,int24,address))' \
+  0x008Df4b3E857D06c4603Aeb11F267ccD32ce2005 \
+  '(0x0000000000000000000000000000000000000000,0x008Df4b3E857D06c4603Aeb11F267ccD32ce2005,0,200,0xE5e702641Ea86F4ae6cC3cDaeD2B886f976Be044)' \
+  --rpc-url <rpc> --account <guardian>
+cast send <OracleRouterV4> 'setSource(address,uint8)' 0x008Df4…2005 3 --rpc-url <rpc> --account <guardian>  # 3 = Source.V4
+```
+
+**Frontend:** the web3 SDK in `frontend-web3/` gains `"V4"` in its `Route` union
+(`src/types.ts`), so SDK consumers type V4 markets. **The React trade app (TanStack Start + wagmi)
+with the `"Not priced · liquidity is in a Uniswap V4 pool"` dead-end in
+`frontend/src/components/trade/token-header.tsx` lives in a separate repo not present in this
+checkout** (per the project memory, "frontend repo not pushable from this auth"). That one-line
+dead-end removal + adding `"V4"` to its `OracleRoute` labels must be applied there; once the oracle
+returns `route: "V4" / supported`, the existing price/preview/positions paths work unchanged.
