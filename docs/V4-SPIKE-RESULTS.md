@@ -54,19 +54,24 @@ cast keccak $(cast abi-encode "f((address,address,uint24,int24,address))" \
 ## 2. TWAP risk parameters — FOR SIGN-OFF
 
 V4 has no cumulative-price accumulator for arbitrary (non-oracle-hook) pools, so we build a
-sampled-spot TWAP, mirroring the existing V2 lazy-TWAP ring in `PriceOracle.sol`. Proposed Stage-0
-parameters below, aligned with the live Chainlink-market posture (2× leverage, 3% payout cap, no LP
-seeded yet). **These numbers get baked into `V4Source`, so they need sign-off first.**
+sampled-spot TWAP. **As built in Phase 2, `V4Source` mirrors the live `PriceOracle` V2 lazy-TWAP ring
+exactly** (same windowing, same 25% breaker), per the parent-session instruction to mirror it — these
+are the shipped constants. They still need sign-off (they are `constant`s, so changing them is a
+recompile+redeploy) and can be retuned before the deploy/migrate phase.
 
-| Parameter | Proposed | Rationale / how to tune |
+| Parameter (as implemented) | Value | Rationale / how to tune |
 | --------- | -------- | ----------------------- |
-| `TWAP_WINDOW` (min) | **1800 s (30 min)** | Long enough that a single-block spot spike can't dominate; matches a conservative memecoin TWAP. |
-| `MIN_SAMPLE_GAP` | **300 s (5 min)** | Minimum spacing between accepted ring samples; caps how fast an attacker can refill the window with manipulated samples. |
-| `RING_SIZE` | **8 samples** | 8 × ≥5 min ≥ 40 min of coverage ≥ window. Keeps SLOADs bounded. |
-| `MAX_SNAPSHOT_AGE` | **3600 s (1 h)** | If the newest sample is older than this → **warming/halted**, no price. Guards an unwarmed/abandoned pool. |
-| `DEVIATION_BPS` | **2500 (25%)** | Spot-vs-TWAP circuit breaker — identical to the existing V2/V3 breaker; opens revert if |spot−twap|/twap > 25%. |
-| `LIQ_FLOOR` (±2% band depth) | **TBD — see note** | ROBINHOOD's band depth is ≈0.23 ETH. A floor near the live `syntheticDepth` (50e18) would reject essentially every memecoin V4 pool. For pool-routed markets the floor should gate *band depth*, not total TVL, and feed the depth-tiered leverage caps. **Decision needed:** pick a band-depth floor (e.g. 0.1–0.25 ETH) and the leverage tiers above it. |
-| Min TWAP samples to price | **3** | Below this → warming. Prevents pricing off one or two samples. |
+| `WINDOW_MIN` | **300 s (5 min)** | Youngest acceptable anchor age — a priced TWAP always spans ≥5 min. A fresh pool warms for 5 min. |
+| `WINDOW_MAX` | **1800 s (30 min)** | Oldest acceptable anchor age; the TWAP window is `[WINDOW_MIN, WINDOW_MAX]`. |
+| `SAMPLE_MIN_GAP` | **60 s** | Minimum spacing between stored ring samples; caps how fast the window can be refilled with manipulated samples. |
+| `MAX_SNAPSHOT_AGE` | **300 s (5 min)** | Newest stored sample must be fresher, else `getPrice` reverts `Stale`. The engine snapshots inside every open/close/liquidate; the keeper/warmer covers quiet markets. |
+| `RING` | **16 samples** | Ring capacity (16 × ≥60 s ≥ 16 min; rolls as it fills). Bounded SLOADs. |
+| `DEVIATION_BPS_MAX` | **2500 (25%)** | Spot-vs-TWAP circuit breaker — identical to the existing V2/V3 breaker; `getPrice` reverts `Deviation` if \|spot−twap\|/twap > 25%. The TWAP uses only *stored* samples; the live spot only feeds this breaker, so the TWAP is unmanipulable at call time. |
+| `LIQ_FLOOR` (±2% band depth) | **constructor arg — SET AT DEPLOY** | Not a constant. ROBINHOOD's band depth is ≈0.237 ETH (confirmed live). A floor near the live feed `syntheticDepth` (50e18) would reject essentially every memecoin V4 pool, so the pool floor must gate *band depth*, not total TVL. **Decision needed:** pick the band-depth floor (e.g. 0.1–0.25 ETH) and the depth-tiered leverage caps above it. |
+
+> Earlier draft proposed a sparser 30-min-window / 5-min-gap / ring-8 / 1-h-age variant. The shipped
+> code instead mirrors `PriceOracle` 1:1 (above) so V4 shares the audited design; if you prefer the
+> sparser variant for quiet memecoin pools, say so and it's a small constant change before deploy.
 
 **Known weakness (accepted in the plan):** a sampled-spot TWAP is weaker than a cumulative TWAP —
 an attacker who *sustains* a manipulated price across the whole window moves the TWAP. The
@@ -74,16 +79,17 @@ compensating controls are the depth floor, the 25% deviation breaker, 2× levera
 cap, synthetic/ETH settlement (the engine never holds the token), and per-market pause. Sign-off =
 accepting this posture for memecoin markets.
 
-**Two new risks the spike surfaced (need a decision):**
+**Two new risks the spike surfaced — mitigation (a) is now implemented:**
 
 1. **Arbitrary hooks / `fee=0`.** The registry cannot whitelist hooks or fees (real pools use
    non-zero hooks and `fee=0`). Pricing is still safe because slot0/liquidity are PoolManager-
-   canonical. No action beyond "store the full key".
+   canonical. Handled: `V4Source.register` stores the full key and accepts any hook/fee.
 2. **Custom-curve hooks (`beforeSwap` returns a delta, e.g. CSMM).** For these, `slot0.sqrtPriceX96`
    may not track execution price and can sit static; V4 slot0 has no timestamp, so a *frozen* price
-   won't trip the staleness guard. **Decision needed — pick one:**
-   - (a) **Guardian allowlist**: only guardian-registered PoolKeys are tradable (we already need a
-     registry; make it guardian-gated for Stage 0). Simplest, matches the interim-guardian posture.
+   won't trip the staleness guard. **Phase-2 ships mitigation (a); (b) remains an option later:**
+   - (a) **Guardian allowlist — IMPLEMENTED**: `V4Source.register` is `onlyGuardian`, so only
+     guardian-vetted PoolKeys are tradable. Matches the interim-guardian posture for Stage 0. The
+     guardian is responsible for only registering standard-behaviour pools.
    - (b) **Hook-permission check** at registration: decode the hook address's permission bits
      (V4 encodes flags in the low bits of the hook address) and reject pools whose hook has
      `beforeSwapReturnDelta`/`afterSwapReturnDelta`/`beforeSwap` set. More permissionless, more code.
