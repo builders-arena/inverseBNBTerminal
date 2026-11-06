@@ -183,9 +183,14 @@ Vercel is **held by user decision** until the contracts are live and the engine 
 backend + on-chain cut over together (runbook step 5).
 
 **The remaining gate is Phase 4 (deploy/migrate). Before any mainnet action, the user signs off on:**
-1. The **§2 sampled-spot TWAP parameters** (window min/max, min sample gap, deviation bps) and must
-   **pick the `LIQ_FLOOR` band-depth floor** (+ depth-tiered leverage caps). Band depth on the pilot
-   pool is ≈0.237 ETH, so the floor must gate band depth, not TVL.
+1. The **§2 sampled-spot TWAP parameters** — ✅ **SIGNED OFF by the user 2026-11-06** (window
+   min/max, min sample gap, deviation bps as shipped). Still to fix: the **`LIQ_FLOOR` band-depth
+   floor** (deploy-time constructor arg; gates band depth, not TVL). Recommended Stage-0 value:
+   **`0.1 ETH` (1e17 wei)** — the pilot ROBINHOOD pool's band depth is ≈0.237 ETH, so this admits it
+   with ~2.4× headroom (depth fluctuates; a floor at the pilot's exact depth would intermittently
+   halt pricing) while still rejecting dust pools. Stage 0 is 2× only, so this is the single 2×
+   floor; raise it / add 5×–10× depth tiers when leverage tiers are enabled. **Pending the user's
+   confirmation of the exact number.**
 2. The **§4 migration runbook** — full-core redeploy (engine + vault + fee distributor + session
    manager + V4Source + OracleRouterV4), the unseeded clean-cutover handling of positions/funds, the
    guardian register/`setSource` steps, and rollback.
