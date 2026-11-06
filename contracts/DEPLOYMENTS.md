@@ -178,3 +178,45 @@ for c in <oracle> <vault> <fee> <engine> <keeperFunder> <router> <adapter>; do
 Only the Safe can thereafter set params, halt markets, pause opens, register feeds, or move
 guardianship again. It can never move user funds (contracts are non-upgradeable and have no admin
 withdrawal path).
+
+---
+
+## Robinhood Chain (chain 4663) — MAINNET — V4 migration stack — 2026-11-06
+
+Uniswap-V4-capable stack deployed and verified on-chain (guardian-broadcast via `script/DeployV4.s.sol`).
+**Deployed and wired, but NOT yet cut over** — the live v2 engine (`0xD7b150C2…`) is still the active
+engine; nothing points at this new stack yet. It reuses the v2 `PriceOracle` (`0x425815165E2a8b0c46D9F049497bE277Ff75E315`)
+and `ChainlinkAdapter` (`0x395D7D98d05189516515a774A44AC6D6b7D1FE77`) behind the new router.
+
+Guardian: `0x34a87c1AD83cB466a479AB32fa34eD0be59dFd70` (interim; retained — no Safe handoff in this deploy)
+
+| Contract        | Address                                      |
+| --------------- | -------------------------------------------- |
+| V4Source        | `0xC2B67771dF265A4EAcca9eF02a3751BF5920f479` |
+| OracleRouterV4  | `0xE7c3c9b54612c5127C38359aa06c38227d600E82` |
+| InverseEngine   | `0x6D25582BD13144Ceb4B259BB13896Ffc6D7f55E4` |
+| InverseVault    | `0x9A8eb055450a1b2F03Fe4d57Fcdf27bc6533D9FD` |
+| FeeDistributor  | `0x605E901B31Fe94e197604B0ED6a1654009ed656b` |
+| SessionManager  | `0x52E5CE7bCfa8e58AC34d6ffCEFCe62214CC60137` |
+| KeeperFunder    | `0x2b98f5C308E24d7C0D9f70f3D2f06b70B5abC5d1` |
+
+Params (verified on-chain): maxLeverageEnabled 10, leverage tiers 1 ETH→5x / 3 ETH→10x, minPosition
+1e13, maxPosition 0.5 ETH, payoutCapBps 500 (5%), poolCap 200 ETH, `V4Source.LIQ_FLOOR` 0.1 ETH.
+
+### Markets (registered on the new router)
+| Market   | id / token                                   | Source   |
+| -------- | -------------------------------------------- | -------- |
+| BTC/USD  | `0x0000000000000000000000000000000000000401` | CHAINLINK (reused adapter) |
+| ROBINHOOD| `0x008Df4b3E857D06c4603Aeb11F267ccD32ce2005` | V4 (poolId `0x7f82…5350`, hooks `0xE5e7…e044`) |
+
+Verified: `engine.oracle()==router`, `router.sourceOf(ROBINHOOD)==V4`, `router.getPrice(BTC)` ≈ live
+Chainlink price, `v4.poolOf(ROBINHOOD)` returns the validated key.
+
+### REMAINING cutover steps (NOT done — guardian + deploy-owning session)
+1. Withdraw the ~0.0012 ETH test LP from the OLD vault `0x3BCfe3bD…` (does not migrate).
+2. `pauseOpens()` on the OLD engine `0xD7b150C2…`.
+3. Re-point services to the new engine/router: backend `ENGINE_ADDRESS=0x6D25582B…`,
+   `ORACLE_ADDRESS=0xE7c3c9b5…` (+ VAULT/FEE/SESSION), frontend config — done together (owned by the
+   "Market page and trade search issues" session).
+4. Seed the new vault WETH; warm the ROBINHOOD V4 ring (keeper/warmer) before expecting its TWAP.
+5. (Optional, later) Safe guardianship handoff for the new contracts.
