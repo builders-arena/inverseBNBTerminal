@@ -148,30 +148,48 @@ cheaper now than it will be post-seeding. Strong recommendation: **migrate to th
 before seeding liquidity and before the Safe handoff.** Do not broadcast any of this without explicit
 sign-off; the guardian key is the user's.
 
-**Open positions & vault funds (why migrating NOW is cheap):** the new engine + new vault are fresh
-contracts — **positions and LP funds do NOT migrate across them.** Open positions live on the *old*
-engine and can only be closed/settled there; LP funds live in the *old* vault and are withdrawn from
-there. Today the live vault is **unseeded (NAV 0, no LP)**, and with no NAV to back payouts there are
-no open positions to wind down — so the migration is a clean cutover with nothing to move. **This is
-the window: migrate before seeding.** If the stack were already seeded, the runbook would grow a
-wind-down (pause opens → let positions close/expire → LPs withdraw from the old vault → redeploy →
-LPs re-deposit into the new vault), which is operationally heavy on a live book — avoid it by
-migrating first.
+**Open positions & vault funds — live state checked on-chain 2026-11-06:** the new engine + new vault
+are fresh contracts, so **positions and LP funds do NOT migrate across them.** Reads on the live v2
+stack:
+- **No open positions.** `vault.reserved() == 0` (nothing reserved for payouts); `engine.nextId() == 3`
+  (two positions opened historically, all closed). So there is nothing to wind down. ✅
+- **The vault IS seeded, but only barely:** `vault.nav() ≈ 1.2e15 wei (~0.0012 ETH)`, `totalShares
+  1.2e15`, `sharePrice ≈ 1.0005e18`. (Earlier drafts said "unseeded (NAV 0)" — that was wrong.)
+
+So the migration is still a near-clean cutover with **no positions to settle**, but the ~0.0012 ETH of
+LP in the old vault will **not** move to the new vault automatically — whoever holds those shares
+(almost certainly the deployer's own test seed) must `withdraw()` from the old vault; the new vault
+starts empty and is seeded fresh. **This is still the cheap window — migrate before any real LP is
+seeded.** Once materially seeded, a migration becomes a heavy wind-down (pause opens → let positions
+close/expire → LPs withdraw from the old vault → re-deposit into the new vault).
+
+**Live risk posture to mirror (the migration must NOT reset to the old 2× Stage-0):** `minPosition
+1e13`, `maxPosition 5e17 (0.5 ETH)`, `maxLeverageEnabled 10`, `payoutCapBps 500 (5%)`, vault
+`poolCap 200e18`. `script/DeployV4.s.sol` defaults to exactly these.
+
+**Position size is also capped by pool depth (verified on a fork):** the engine caps a position's
+notional at ~2% of the market's band depth. ROBINHOOD's V4 band depth is ≈0.237 ETH, so its **max
+notional is ≈0.0047 ETH** today — i.e. thin memecoin V4 pools get small position caps automatically
+(a feature, not a bug). (minPosition `1e13` = 0.00001 ETH, so small trades like 0.0001 ETH open fine.)
 
 **Pre-flight (read-only, anyone):**
 - [x] Live stack resolved & verified: v2 engine `0xD7b150C2…` → router `0xB8638fd2…` (see top note).
-- [ ] Confirm **no open positions** on the live v2 engine `0xD7b150C2…` and **vault NAV == 0 /
-      balance == 0** on vault `0x3BCfe3bD…` (unseeded).
+- [x] No open positions confirmed (`vault.reserved()==0`, `engine.nextId()==3`); old vault holds only
+      ~0.0012 ETH test LP — withdraw it from the old vault (it won't migrate), then seed the new vault fresh.
       If either is non-zero, STOP and switch to the seeded wind-down above before proceeding.
-- [ ] Deploy + verify the new stack on a fork and/or a fresh testnet; run fork tests green.
+- [x] Deploy script + fork verification exist and pass: `script/DeployV4.s.sol` (broadcast-ready) and
+      `test/MigrationV4.fork.t.sol` — the latter stands up the full new stack against a Robinhood-Chain
+      fork and opens/closes a position on BOTH BTC (reused Chainlink) and ROBINHOOD (V4) end-to-end.
+      Re-run before broadcasting: `ROBINHOOD_FORK_RPC=<rpc> forge test --match-contract MigrationV4Fork`.
 
 **Migration (guardian key):**
 1. **Pause opens** on the old engine (keeps it read-safe; no-op for user funds if unseeded).
-2. Deploy the full new core (see the pointer audit above): `V4Source` (+ StateView `0xf333…`), new
-   `OracleRouterV4`, new `StkmemesEngine` → new `StkmemesVault` (`setEngine(newEngine)`) → new
-   `FeeDistributor` → new `SessionManager`, reusing the existing `PriceOracle` + `ChainlinkAdapter`
-   behind the new router. Apply Stage-0 params (pool cap, max position, 2× leverage, 3% payout cap)
-   and the TWAP params from §2 (incl. the chosen `LIQ_FLOOR`).
+2. Deploy the full new core via **`forge script script/DeployV4.s.sol --rpc-url <robinhood> --broadcast`**
+   with the guardian key in `PRIVATE_KEY` (and `GUARDIAN_SAFE` if handing off). It deploys `V4Source`
+   (+ StateView), new `OracleRouterV4`, new engine → new vault (`setEngine`) → new fee distributor →
+   new session manager, reusing the live `PriceOracle` + `ChainlinkAdapter`, mirrors the live risk
+   posture (min 1e13 / max 0.5 / 10× / 5% / poolCap 200), applies `LIQ_FLOOR` (default 0.1 ETH), and
+   registers the markets (step 3–4 below are done by the script). Review its env defaults first.
 3. Re-register existing markets (BTC/USD Chainlink) on the new router so nothing regresses.
 4. Register the first V4 PoolKey(s) via the guardian-gated registry (ROBINHOOD as the pilot):
    `V4Source.register(token, key)` then `OracleRouterV4.setSource(token, 3)`.
