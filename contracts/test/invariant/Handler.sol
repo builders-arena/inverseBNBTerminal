@@ -2,8 +2,8 @@
 pragma solidity 0.8.24;
 
 import {Test} from "forge-std/Test.sol";
-import {InverseEngine} from "../../src/core/InverseEngine.sol";
-import {InverseVault} from "../../src/core/InverseVault.sol";
+import {InverseEngine} from "../../src/core/StkmemesEngine.sol";
+import {InverseVault} from "../../src/core/StkmemesVault.sol";
 import {PriceOracle} from "../../src/oracle/PriceOracle.sol";
 import {MockV2Pair} from "../mocks/MockV2Pair.sol";
 import {MockERC20} from "../mocks/MockERC20.sol";

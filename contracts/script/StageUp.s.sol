@@ -2,8 +2,8 @@
 pragma solidity 0.8.24;
 
 import {Script, console2} from "forge-std/Script.sol";
-import {InverseVault} from "../src/core/InverseVault.sol";
-import {InverseEngine} from "../src/core/InverseEngine.sol";
+import {InverseVault} from "../src/core/StkmemesVault.sol";
+import {InverseEngine} from "../src/core/StkmemesEngine.sol";
 
 /// @notice Applies a staged-launch parameter set. In production these calls are executed by the
 ///         Guardian Safe; this script documents the exact parameters per stage (see plan §9).

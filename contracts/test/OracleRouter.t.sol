@@ -2,9 +2,9 @@
 pragma solidity 0.8.24;
 
 import {Base} from "./Base.t.sol";
-import {InverseVault} from "../src/core/InverseVault.sol";
+import {InverseVault} from "../src/core/StkmemesVault.sol";
 import {FeeDistributor} from "../src/core/FeeDistributor.sol";
-import {InverseEngine} from "../src/core/InverseEngine.sol";
+import {InverseEngine} from "../src/core/StkmemesEngine.sol";
 import {SessionManager} from "../src/periphery/SessionManager.sol";
 import {OracleRouter} from "../src/oracle/OracleRouter.sol";
 import {PythAdapter} from "../src/oracle/PythAdapter.sol";

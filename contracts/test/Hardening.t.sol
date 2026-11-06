@@ -2,7 +2,7 @@
 pragma solidity 0.8.24;
 
 import {Base} from "./Base.t.sol";
-import {IInverseEngine} from "../src/interfaces/IInverseEngine.sol";
+import {IInverseEngine} from "../src/interfaces/IStkmemesEngine.sol";
 import {Errors} from "../src/libraries/Errors.sol";
 
 /// @notice Adversarial / accounting edge cases beyond the happy-path suites.

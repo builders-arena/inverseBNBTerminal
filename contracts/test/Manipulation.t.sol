@@ -2,7 +2,7 @@
 pragma solidity 0.8.24;
 
 import {Base} from "./Base.t.sol";
-import {IInverseEngine} from "../src/interfaces/IInverseEngine.sol";
+import {IInverseEngine} from "../src/interfaces/IStkmemesEngine.sol";
 
 /// @notice Exercises the economic manipulation guards: instant entry uses the TWAP (not spot), a spot
 ///         spike is rejected by the deviation breaker, and max payout is bounded by pool liquidity.

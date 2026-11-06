@@ -3,11 +3,11 @@ pragma solidity 0.8.24;
 
 import {Test, console2} from "forge-std/Test.sol";
 import {PriceOracle} from "../src/oracle/PriceOracle.sol";
-import {InverseVault} from "../src/core/InverseVault.sol";
+import {InverseVault} from "../src/core/StkmemesVault.sol";
 import {FeeDistributor} from "../src/core/FeeDistributor.sol";
-import {InverseEngine} from "../src/core/InverseEngine.sol";
+import {InverseEngine} from "../src/core/StkmemesEngine.sol";
 import {IPriceOracle} from "../src/interfaces/IPriceOracle.sol";
-import {IInverseEngine} from "../src/interfaces/IInverseEngine.sol";
+import {IInverseEngine} from "../src/interfaces/IStkmemesEngine.sol";
 import {MockERC20} from "./mocks/MockERC20.sol";
 
 /// @notice Fork-of-mainnet scenario test: runs the lazy-TWAP oracle and a full open/close against the

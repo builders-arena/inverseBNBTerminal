@@ -4,7 +4,7 @@ pragma solidity 0.8.24;
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {IFeeDistributor} from "../interfaces/IFeeDistributor.sol";
-import {IInverseVault} from "../interfaces/IInverseVault.sol";
+import {IInverseVault} from "../interfaces/IStkmemesVault.sol";
 import {Errors} from "../libraries/Errors.sol";
 import {Governed} from "../libraries/Governed.sol";
 
