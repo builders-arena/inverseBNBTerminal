@@ -59,6 +59,7 @@ contract MigrationV4ForkTest is Test {
         engine.setSessionManager(address(session));
         engine.setPositionLimits(1e13, 0.5 ether);
         engine.setMaxLeverageEnabled(10);
+        engine.setLeverageTiers(1 ether, 3 ether); // live v2 posture: 1 ETH->5x, 3 ETH->10x
         engine.setPayoutCapBps(500);
         engine.setMinHold(0); // test: close immediately
         vault.setPoolCap(200 ether);
@@ -83,16 +84,22 @@ contract MigrationV4ForkTest is Test {
         assertEq(address(engine.oracle()), address(router));
         assertEq(uint8(router.sourceOf(BTC)), uint8(OracleRouterV4.Source.CHAINLINK));
         assertEq(uint8(router.sourceOf(ROBINHOOD)), uint8(OracleRouterV4.Source.V4));
+        // posture preserved: leverage tiers mirror live v2 (1 ETH -> 5x, 3 ETH -> 10x), not defaults
+        assertEq(engine.maxLeverageEnabled(), 10);
+        assertEq(engine.lev5FloorWbnb(), 1 ether);
+        assertEq(engine.lev10FloorWbnb(), 3 ether);
     }
 
-    function test_Btc_PriceAndTrade() public {
+    function test_Btc_PriceAndTrade_10x() public {
         if (!forked) { vm.skip(true); return; }
         assertTrue(router.isSupported(BTC));
         assertGt(router.getPrice(BTC), 0); // live Chainlink price via reused adapter
 
+        // BTC synthetic depth (50 ETH) clears the 3 ETH tier floor, so 10x must be allowed — proves
+        // the leverage tiers carried over (a fresh engine's 50 ETH default floor would reject this).
         vm.startPrank(trader);
         IERC20(WETH).approve(address(engine), 1 ether);
-        uint256 id = engine.openPosition(0.01 ether, BTC, true, 2, 0, 0);
+        uint256 id = engine.openPosition(0.01 ether, BTC, true, 10, 0, 0);
         engine.closePosition(id);
         vm.stopPrank();
         assertGt(id, 0);

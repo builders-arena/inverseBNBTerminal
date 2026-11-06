@@ -164,8 +164,16 @@ seeded.** Once materially seeded, a migration becomes a heavy wind-down (pause o
 close/expire → LPs withdraw from the old vault → re-deposit into the new vault).
 
 **Live risk posture to mirror (the migration must NOT reset to the old 2× Stage-0):** `minPosition
-1e13`, `maxPosition 5e17 (0.5 ETH)`, `maxLeverageEnabled 10`, `payoutCapBps 500 (5%)`, vault
-`poolCap 200e18`. `script/DeployV4.s.sol` defaults to exactly these.
+1e13`, `maxPosition 5e17 (0.5 ETH)`, `maxLeverageEnabled 10`, **`leverageTiers` = `lev5FloorWbnb 1
+ETH` / `lev10FloorWbnb 3 ETH`** (verified live), `payoutCapBps 500 (5%)`, vault `poolCap 200e18`.
+`script/DeployV4.s.sol` applies all of these. **The tiers are easy to miss:** a fresh engine
+constructs with default floors `15 ETH / 50 ETH`, so if `setLeverageTiers(1e18, 3e18)` is omitted the
+migration silently regresses every market to 2× (anything below 15 ETH band depth). The fork test
+guards this by opening BTC at 10× (its 50-ETH synthetic depth clears the 3-ETH floor). Note ROBINHOOD
+itself stays 2× (its ~0.237 ETH band is below the 1-ETH 5× floor) — only deep markets reach 5×/10×.
+
+**`LIQ_FLOOR` is still the user's call.** `DeployV4` defaults it to 0.1 ETH as a placeholder; confirm
+or adjust before broadcast (it is a plain env override, no code change).
 
 **Position size is also capped by pool depth (verified on a fork):** the engine caps a position's
 notional at ~2% of the market's band depth. ROBINHOOD's V4 band depth is ≈0.237 ETH, so its **max
@@ -188,7 +196,8 @@ notional is ≈0.0047 ETH** today — i.e. thin memecoin V4 pools get small posi
    with the guardian key in `PRIVATE_KEY` (and `GUARDIAN_SAFE` if handing off). It deploys `V4Source`
    (+ StateView), new `OracleRouterV4`, new engine → new vault (`setEngine`) → new fee distributor →
    new session manager, reusing the live `PriceOracle` + `ChainlinkAdapter`, mirrors the live risk
-   posture (min 1e13 / max 0.5 / 10× / 5% / poolCap 200), applies `LIQ_FLOOR` (default 0.1 ETH), and
+   posture (min 1e13 / max 0.5 / 10× / tiers 1&3 ETH / 5% / poolCap 200), applies `LIQ_FLOOR`
+   (default 0.1 ETH placeholder — confirm before broadcast), and
    registers the markets (step 3–4 below are done by the script). Review its env defaults first.
 3. Re-register existing markets (BTC/USD Chainlink) on the new router so nothing regresses.
 4. Register the first V4 PoolKey(s) via the guardian-gated registry (ROBINHOOD as the pilot):

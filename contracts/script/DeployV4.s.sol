@@ -70,6 +70,11 @@ contract DeployV4 is Script {
         uint256 minPos = vm.envOr("MIN_POSITION", uint256(1e13));
         uint256 maxPos = vm.envOr("MAX_POSITION", uint256(0.5 ether));
         uint8 maxLev = uint8(vm.envOr("MAX_LEVERAGE", uint256(10)));
+        // Leverage-tier depth floors (WETH band depth that unlocks 5x / 10x). MUST mirror the live v2
+        // engine (1 ETH / 3 ETH) — a fresh engine defaults to 15/50 ETH, which would silently regress
+        // every market to 2x. Verified live: lev5FloorWbnb==1e18, lev10FloorWbnb==3e18.
+        uint256 lev5Floor = vm.envOr("LEV5_FLOOR", uint256(1 ether));
+        uint256 lev10Floor = vm.envOr("LEV10_FLOOR", uint256(3 ether));
         uint256 payoutCapBps = vm.envOr("PAYOUT_CAP_BPS", uint256(500));
         uint256 poolCap = vm.envOr("POOL_CAP", uint256(200 ether));
         uint256 bootstrapCap = vm.envOr("BOOTSTRAP_CAP", uint256(500 ether));
@@ -78,7 +83,7 @@ contract DeployV4 is Script {
         else vm.startBroadcast();
 
         deployStack(asset, priceOracle, chainlinkAdapter, stateView, treasury, liqFloor, bootstrapCap, deployer);
-        wireAndParams(minPos, maxPos, maxLev, payoutCapBps, poolCap);
+        wireAndParams(minPos, maxPos, maxLev, payoutCapBps, poolCap, lev5Floor, lev10Floor);
         registerMarkets();
         if (guardianSafe != deployer) handOff(guardianSafe);
 
@@ -108,14 +113,23 @@ contract DeployV4 is Script {
         keeperFunder = new KeeperFunder(deployer);
     }
 
-    function wireAndParams(uint256 minPos, uint256 maxPos, uint8 maxLev, uint256 payoutCapBps, uint256 poolCap)
-        internal
-    {
+    function wireAndParams(
+        uint256 minPos,
+        uint256 maxPos,
+        uint8 maxLev,
+        uint256 payoutCapBps,
+        uint256 poolCap,
+        uint256 lev5Floor,
+        uint256 lev10Floor
+    ) internal {
         vault.setEngine(address(engine));
         engine.setSessionManager(address(session));
         // Mirror the current live v2 risk posture (not the old 2x Stage-0 defaults).
         engine.setPositionLimits(minPos, maxPos);
         engine.setMaxLeverageEnabled(maxLev);
+        // Critical: without this the new engine keeps the 15/50 ETH default tier floors and every
+        // market below 15 ETH depth (i.e. all memecoins) silently drops to 2x.
+        engine.setLeverageTiers(lev5Floor, lev10Floor);
         engine.setPayoutCapBps(payoutCapBps);
         vault.setPoolCap(poolCap);
     }
