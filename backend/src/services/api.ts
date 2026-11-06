@@ -1,47 +1,31 @@
 import Fastify from "fastify";
 import cors from "@fastify/cors";
-import websocket from "@fastify/websocket";
-import type { WebSocket } from "ws";
+import { fileURLToPath } from "node:url";
 import { ethers } from "ethers";
-import { config, warmTokens } from "../lib/config.js";
+import { config } from "../lib/config.js";
 import { logger } from "../lib/logger.js";
 import { prisma, jsonSafe } from "../lib/db.js";
 import { makeProvider, contracts } from "../lib/chain.js";
-import type { WsMessage } from "../lib/types.js";
 
 const ROUTE = ["NONE", "V2", "V3"] as const;
 const DAY = 86_400n;
 
-async function main(): Promise<void> {
+// Server-side cache for the GeckoTerminal proxy (see the /gt/* route). One upstream call per path per
+// TTL, shared across all clients, so GeckoTerminal's tight per-IP free rate limit is never the bottleneck.
+const gtCache = new Map<string, { at: number; body: unknown }>();
+const GT_BASE = "https://api.geckoterminal.com/api/v2/networks/robinhood/";
+
+/// Builds the REST API. No WebSocket — the frontend polls — so this is a plain Fastify instance that
+/// works both as a long-running server (local / Fly, via `main`) and wrapped in a Vercel serverless
+/// handler. Cache the returned app across serverless invocations (one cold start per container).
+export async function buildApp() {
   const provider = makeProvider();
-  // Swallow provider-level RPC errors (e.g. 429 rate limits) so event polling never crashes the api.
+  // Swallow provider-level RPC errors (e.g. 429 rate limits) so a bad block never crashes a request.
   provider.on("error", (err) => logger.warn({ err }, "rpc provider error (ignored)"));
   const c = contracts(provider);
 
   const app = Fastify({ logger: false });
   await app.register(cors, { origin: config.CORS_ORIGIN });
-  await app.register(websocket);
-
-  // ---- WebSocket fan-out ----
-  const clients = new Set<WebSocket>();
-  const broadcast = (msg: WsMessage): void => {
-    const payload = JSON.stringify(msg);
-    for (const ws of clients) {
-      try {
-        ws.send(payload);
-      } catch {
-        clients.delete(ws);
-      }
-    }
-  };
-
-  app.register(async (f) => {
-    f.get("/ws/live", { websocket: true }, (socket: WebSocket) => {
-      clients.add(socket);
-      socket.on("close", () => clients.delete(socket));
-      socket.on("error", () => clients.delete(socket));
-    });
-  });
 
   // ---- REST ----
   app.get("/health", async () => ({ ok: true }));
@@ -182,14 +166,44 @@ async function main(): Promise<void> {
     return jsonSafe(rows);
   });
 
-  // ---- Live chain listeners -> WS ----
-  attachListeners(c.engine, broadcast).catch((err) => logger.error({ err }, "listener error"));
+  // ---- Cached GeckoTerminal proxy ----
+  // The frontend hits this instead of GeckoTerminal directly: GT rate-limits per client IP (429s look
+  // like CORS errors in the browser), so we proxy + cache here on one server IP. Serves stale on error.
+  app.get("/gt/*", async (req, reply) => {
+    const rest = req.url.slice("/gt/".length); // path + query, e.g. "pools/0x…/ohlcv/minute?…"
+    if (!rest || rest.includes("..") || rest.startsWith("/")) {
+      reply.code(400);
+      return { error: "bad path" };
+    }
+    const url = `${GT_BASE}${rest}`;
+    const ttl = rest.includes("ohlcv") ? 30_000 : 60_000;
+    const hit = gtCache.get(url);
+    if (hit && Date.now() - hit.at < ttl) return hit.body;
+    try {
+      const res = await fetch(url, { headers: { accept: "application/json" } });
+      if (!res.ok) {
+        if (hit) return hit.body; // serve stale rather than propagate a 429
+        reply.code(res.status === 429 ? 503 : res.status);
+        return { error: `geckoterminal ${res.status}` };
+      }
+      const body = await res.json();
+      if (gtCache.size > 1000) gtCache.clear();
+      gtCache.set(url, { at: Date.now(), body });
+      return body;
+    } catch {
+      if (hit) return hit.body;
+      reply.code(502);
+      return { error: "geckoterminal unreachable" };
+    }
+  });
 
-  // ---- Periodic pool/price push ----
-  setInterval(() => {
-    void pushPoolAndPrices(c, broadcast);
-  }, 10_000);
+  return app;
+}
 
+/// Long-running entry for local dev and any always-on host (`npm run start:api`). Vercel uses the
+/// serverless handler in `backend/api/index.ts` instead and never calls this.
+async function main(): Promise<void> {
+  const app = await buildApp();
   await app.listen({ port: config.API_PORT, host: config.API_HOST });
   logger.info({ port: config.API_PORT }, "api listening");
 }
@@ -237,9 +251,18 @@ async function volume24h(token: string, since: bigint): Promise<bigint> {
   return v;
 }
 
+/** Reject if `p` doesn't settle within `ms` — bounds a slow/hung RPC call so the HTTP request
+ *  always returns quickly with a safe fallback instead of hanging the connection. */
+function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
+  return Promise.race([
+    p,
+    new Promise<T>((_, reject) => setTimeout(() => reject(new Error("rpc timeout")), ms)),
+  ]);
+}
+
 async function oracleStatus(oracle: ethers.Contract, token: string): Promise<unknown> {
   try {
-    const s = await oracle.status(token);
+    const s = await withTimeout(oracle.status(token), 12000);
     return {
       token,
       supported: s.supported,
@@ -257,100 +280,17 @@ async function oracleStatus(oracle: ethers.Contract, token: string): Promise<unk
   }
 }
 
-async function attachListeners(engine: ethers.Contract, broadcast: (m: WsMessage) => void): Promise<void> {
-  await engine.on("PositionOpened", (id, trader, token, isLong, leverage, collateral, entryPrice, ev) => {
-    broadcast({
-      type: "trade",
-      data: {
-        id: id.toString(),
-        trader,
-        token,
-        isLong,
-        leverage: Number(leverage),
-        collateral: collateral.toString(),
-        entryPrice: entryPrice.toString(),
-        action: "open",
-        txHash: ev?.log?.transactionHash ?? "",
-        timestamp: Math.floor(Date.now() / 1000),
-      },
-    });
-  });
-
-  await engine.on("PositionClosed", async (id, pnl, _bf, _cf, _out, ev) => {
-    const pos = await prisma.position.findUnique({ where: { id: id as bigint } }).catch(() => null);
-    broadcast({
-      type: "trade",
-      data: {
-        id: id.toString(),
-        trader: pos?.trader ?? "",
-        token: pos?.token ?? "",
-        isLong: pos?.isLong ?? false,
-        leverage: pos?.leverage ?? 0,
-        collateral: pos?.collateral ?? "0",
-        entryPrice: pos?.entryPrice ?? "0",
-        action: "close",
-        pnl: pnl.toString(),
-        txHash: ev?.log?.transactionHash ?? "",
-        timestamp: Math.floor(Date.now() / 1000),
-      },
-    });
-  });
-
-  await engine.on("PositionLiquidated", (id, keeper, keeperReward, _tv, _bd, ev) => {
-    broadcast({
-      type: "liquidation",
-      data: {
-        id: id.toString(),
-        token: "",
-        keeper,
-        keeperReward: keeperReward.toString(),
-        txHash: ev?.log?.transactionHash ?? "",
-        timestamp: Math.floor(Date.now() / 1000),
-      },
-    });
-  });
-}
-
-async function pushPoolAndPrices(
-  c: ReturnType<typeof contracts>,
-  broadcast: (m: WsMessage) => void,
-): Promise<void> {
-  try {
-    const [nav, reserved, utilBps, sharePrice] = await Promise.all([
-      c.vault.nav() as Promise<bigint>,
-      c.vault.reserved() as Promise<bigint>,
-      c.vault.utilizationBps() as Promise<bigint>,
-      c.vault.sharePrice() as Promise<bigint>,
-    ]);
-    broadcast({
-      type: "pool",
-      data: {
-        nav: nav.toString(),
-        reserved: reserved.toString(),
-        utilizationBps: Number(utilBps),
-        sharePrice: sharePrice.toString(),
-      },
-    });
-    for (const token of warmTokens) {
-      try {
-        const price: bigint = await c.oracle.getPrice(token);
-        broadcast({ type: "price", data: { token, price: price.toString(), timestamp: Math.floor(Date.now() / 1000) } });
-      } catch {
-        // warming / unsupported — skip
-      }
-    }
-  } catch (err) {
-    logger.debug({ err }, "pool push skipped");
-  }
-}
-
 // Keep the daemon alive through transient RPC faults (rate limits, dropped sockets). These would
 // otherwise bubble up from ethers' event poller as unhandled rejections and exit the process,
 // which on Fly causes a restart-storm that amplifies the RPC load.
-process.on("unhandledRejection", (reason) => logger.error({ reason }, "unhandledRejection (continuing)"));
-process.on("uncaughtException", (err) => logger.error({ err }, "uncaughtException (continuing)"));
+// Only boot a long-running server when executed directly (local / Fly). When the Vercel serverless
+// handler imports buildApp, this stays dormant.
+if (process.argv[1] && process.argv[1] === fileURLToPath(import.meta.url)) {
+  process.on("unhandledRejection", (reason) => logger.error({ reason }, "unhandledRejection (continuing)"));
+  process.on("uncaughtException", (err) => logger.error({ err }, "uncaughtException (continuing)"));
 
-main().catch((err) => {
-  logger.error({ err }, "api fatal");
-  process.exit(1);
-});
+  main().catch((err) => {
+    logger.error({ err }, "api fatal");
+    process.exit(1);
+  });
+}
